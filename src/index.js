@@ -8,6 +8,7 @@ import {
 import {
   initProjections, 
   watch, 
+  when,
   project, 
   addProjector, 
   getProjection,
@@ -16,13 +17,15 @@ import {
 
 const {keys} = Object
 
-const storeAndProject = (action, projectionNamespace) => new Promise((resolve, reject) => {
+const store = (action) => append(createEvent(action))
+
+const storeAndProject = (action, projectionNamespace, condition) => new Promise((resolve, reject) => {
   const event = createEvent(action)
-  watch(projectionNamespace, event.timestamp).then(resolve).catch(reject)
+  when(projectionNamespace, event.timestamp, condition).then(resolve).catch(reject)
   append(event).catch(reject)
 })
 
-export default ({eventStorePath, projectionsPath, projectors}) => {
+export default ({eventStorePath, projectionsPath, projectors, filters}) => {
   if (!eventStorePath || !projectionsPath || !projectors) {
     throw new Error('Andvari requires eventStorePath, projectionsPath, and projectors map')
     return 
@@ -35,10 +38,18 @@ export default ({eventStorePath, projectionsPath, projectors}) => {
 
   keys(projectors).forEach(projector => addProjector(projector, projectors[projector]))
 
+  if (filters) {
+    keys(filters).forEach(namespace => {
+      const {projection, filter} = filters[namespace]
+      filterProjection(projection, namespace, filter)
+    })
+  }
+
   return {
+    store,
     storeAndProject,
     getProjection,
-    filterProjection,
-    getEvents
+    getEvents,
+    watch
   }
 }

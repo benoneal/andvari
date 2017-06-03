@@ -15,12 +15,15 @@ export const addProjector = (namespace, lens) => {
 }
 
 const createSnapshot = (events, namespace, oldProjection) => {
+  const projection = events.reduce(projectors[namespace], oldProjection)
+  if (projection === oldProjection) return
+
   projector.put(
     namespace, 
     {
       namespace,
       timestamp: events[events.length - 1].timestamp,
-      projection: events.reduce(projectors[namespace], oldProjection)
+      projection
     }
   )
 }
@@ -28,10 +31,7 @@ const createSnapshot = (events, namespace, oldProjection) => {
 export const project = (event, getEvents) => {
   keys(projectors).forEach((namespace) => {
     projector.get(namespace, (err, {timestamp, projection} = {}) => {
-      if (err && !err.notFound) {
-        throw err
-        return
-      }
+      if (err && !err.notFound) { throw err }
       if (err && err.notFound || event.timestamp < timestamp) {
         return getEvents().then(events => createSnapshot(events, namespace))
       }
@@ -48,26 +48,30 @@ export const getProjection = (namespace) => new Promise((resolve, reject) => {
 })
 
 export const filterProjection = (projectionNamespace, namespace, filter) => {
-  projector.on('put', (snapshotNamespace, {timestamp, projection}) => {
-    if (snapshotNamespace !== projectionNamespace) return
+  watch(projectionNamespace, (projection, timestamp) => {
     projector.get(namespace, (err, {timestamp: filteredTimestamp}) => {
       if (filteredTimestamp === timestamp) return
-      if (err && !err.notFound) {
-        throw err
-        return
-      }
+      if (err && !err.notFound) { throw err }
       projector.put( 
         namespace, 
-        {timestamp, namespace, projection: filter(projection)}
+        {
+          namespace, 
+          timestamp, 
+          projection: filter(projection)
+        }
       )
     })
   })
-  .on('error', reject)
 }
 
-export const watch = (namespace, timestamp) => new Promise((resolve, reject) => {
-  projector.on('put', (snapshotNamespace, {timestamp: snapshotTimestamp, projection}) => 
-    (snapshotNamespace === namespace && snapshotTimestamp === timestamp) && resolve(projection)
-  )
-  .on('error', reject)
-})
+const defaultCondition = () => true
+
+export const when = (namespace, eTimestamp, condition = defaultCondition) => 
+  new Promise((resolve, reject) => {
+    watch(namespace, (projection, ssTimestamp) => 
+      (ssTimestamp >= eTimestamp && condition(projection)) && resolve(projection))
+  })
+
+export const watch = (namespace, fn) => {
+  projector.on('put', (snapshot, {timestamp, projection}) => (snapshot === namespace) && fn(projection, timestamp))
+}

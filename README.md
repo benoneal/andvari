@@ -16,11 +16,19 @@ const dbOptions = {
   eventStorePath: './data/eventStore', // path to the directory where your events data will be persisted
   projectionsPath: './data/projections', // path to the directory where your projections data will be persisted
   projectors: {
-    userCount: (projection, {type, payload}) => type !== 'CREATE_USER' ? projection : ({
+    users: (projection, {type, payload: {id, name, email}}) => type !== 'CREATE_USER' ? projection : ({
       ...projection,
-      uniqueIds: uniq([...projection.uniqueIds, payload.id])
-      count: uniq([...projection.uniqueIds, payload.id]).length
+      [id]: {
+        name, 
+        email
+      }
     })
+  },
+  filters: {
+    userCount: {
+      projection: 'users',
+      filter: (users) => Object.keys(users).length
+    }
   }
 }
 
@@ -44,15 +52,39 @@ userActions.forEach(action => storeAndProject(action, 'userCount').then(log))
 ```
 
 #### Projectors map
-The projectors map uses projection namespaces as keys (the namespaces you want to use to fetch projections), and the reducer as value (the function which processes each event into your projection). 
+The projectors map uses projection namespaces as keys (the namespaces you want to use to fetch projections), and the reducer as value (the function which processes each event into your projection). Example: 
+
+```js
+const projectors = {
+  users: (projection, {type, payload: {id, name, email}}) => type !== 'CREATE_USER' ? projection : ({
+    ...projection,
+    [id]: {
+      name, 
+      email
+    }
+  })
+}
+```
+
+#### Filters map
+Filters are new projections made by transforming an existing complete projection. The filters map uses filter projection namespaces as keys (the namespaces you want to use to fetch filtered projections), and the reducer as value (the function which processes each event into your projection). Example: 
+
+```js
+const filters = {
+  userCount: {
+    projection: 'users',
+    filter: (users) => Object.keys(users).length
+  }
+}
+```
 
 ## API
 ```js
-storeAndProject <Projection> (<Action: object>, <ProjectionNamespace: string>)
+store <NanosecondTimestamp> (<Action: object>)
+storeAndProject <Projection> (<Action: object>, <ProjectionNamespace: string>, <Condition: function>)
 getProjection <Projection> (<ProjectionNamespace: string>)
 getEvents <Event []> (<NanosecondTimestampFrom: string>, <NanosecondTimestampTo: string>)
-filterProjection <Projection> (<ProjectorNamespaceToFilter: string>, <FilteredProjectionNamespace: string>, <Filter: function <Projection> (<Projection: any>)>)
-// filterProjection watches a projection, and passes all changes through your filter function, saving them as a filteredProjection with your provided namespace. Read with getProjection(FilteredProjectionNamespace).
+watch <Projection> (<ProjectionNamespace: string>, <Callback: function>)
 
 <Action>: {
   type: String,
