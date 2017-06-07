@@ -46,16 +46,16 @@ export default ({eventStorePath, projectionsPath, projectors, filters}) => {
 
   const createWorker = ({
     namespace, 
-    listenToEvent,
-    eventCondition = () => true, 
+    event,
+    condition = () => true, 
     perform, 
     onSuccess, 
     onError,
     retries, 
     timeout
   }) => {
-    if (!namespace || !listenToEvent || typeof perform !== 'function' || typeof onSuccess !== 'function' || typeof onError !== 'function') {
-      throw new Error('createWorker requires namespace, listenToEvent, perform, onSuccess, and onError')
+    if (!namespace || !event || typeof perform !== 'function' || typeof onSuccess !== 'function' || typeof onError !== 'function') {
+      throw new Error('createWorker requires namespace, event, perform, onSuccess, and onError')
     }
     addProjector(namespace, createWorkerLens(namespace))
     initWorker({
@@ -66,10 +66,11 @@ export default ({eventStorePath, projectionsPath, projectors, filters}) => {
       retries,
       timeout,
       store,
-      watch
+      watch,
+      getProjection
     })
     listen(({type, payload}) => {
-      if (type !== onEventType || !eventCondition(payload)) return
+      if (type !== event || !condition(payload)) return
       store({type: `${namespace}:queue`, payload: {...payload, id: payload.id || uuid()}})
     })
   }

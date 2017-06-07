@@ -10,16 +10,17 @@ export default ({
   retries = 0,
   timeout = 60000,
   store,
-  watch
+  watch,
+  getProjection
 }) => {
   const processing = {}
   const processId = uuid()
 
   const requestLock = ({id}) => store({type: `${namespace}:lock`, payload: {id, processorId: processId}})
 
-  const processLocked = ({id, ...locked}) => {
+  const processLocked = ({id, processorId, attempts, ...locked}) => {
     processing[id] = true
-    perform({id, processorId, attempts, ...locked})
+    perform({id, ...locked}, getProjection)
       .then((res) => {
         delete processing[id]
         store({type: `${namespace}:success`, payload: {id}})
