@@ -1,6 +1,6 @@
 {
   "name": "andvari",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Event sourcing for node.js",
   "repository": "https://github.com/benoneal/andvari",
   "main": "dist/index.js",
@@ -34,7 +34,8 @@
   },
   "dependencies": {
     "level": "^1.6.0",
-    "nano-time": "^1.0.0"
+    "nano-time": "^1.0.0",
+    "uuid": "^3.0.1"
   },
   "standard": {
     "parser": "babel-eslint"
