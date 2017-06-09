@@ -78,17 +78,36 @@ const filters = {
 }
 ```
 
+#### createWorker
+Andvari exposes a useful worker abstraction. Workers will respond to a specified event, performing whatever action you want to perform in a separate event/projection loop (soon to be one or more separate threads). The worker handles idempotency to ensure that you will never ever process the same event twice, no matter how often your projections are re-run, or how many times you need to retry failed actions (or how many threads are running). 
+
+Workers are useful for managing side effects and integrations with external services, such as sending emails and processing payments. Just focus on writing business logic and let a worker manage the repetitive implementation details. 
+
 ## API
+createDB returns the following interface: 
+
 ```js
 store <NanosecondTimestamp> (<Action: object>)
 storeAndProject <Projection> (<Action: object>, <ProjectionNamespace: string>, <Condition: function>)
 getProjection <Projection> (<ProjectionNamespace: string>)
 getEvents <Event []> (<NanosecondTimestampFrom: string>, <NanosecondTimestampTo: string>)
 watch <Projection> (<ProjectionNamespace: string>, <Callback: function>)
+createWorker <> (<WorkerConfig>)
 
 <Action>: {
-  type: String,
+  type: string,
   payload: any
+}
+
+<WorkerConfig>: {
+  namespace: string,
+  event: string,
+  condition: function <Bool> (<EventPayload>),
+  onSuccess: actionCreatorFunction,
+  onError: actionCreatorFunction,
+  perform: function <Promise> (<EventPayload>, getProjection),
+  retries: number, 
+  timeout: milliseconds
 }
 ```
 
