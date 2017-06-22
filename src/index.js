@@ -5,6 +5,7 @@ import initWorker from './worker'
 import createWorkerLens from './workerLens'
 
 const {keys} = Object
+const {isArray} = Array
 
 export default ({eventStorePath, projectionsPath, projectors, filters}) => {
   if (!eventStorePath || !projectionsPath || !projectors) {
@@ -27,12 +28,16 @@ export default ({eventStorePath, projectionsPath, projectors, filters}) => {
     filterProjection
   } = initProjections(projectionsPath)
 
-  const store = (action) => append(createEvent(action))
+  const store = (actions) => {
+    actions = isArray(actions) ? actions : [actions]
+    return Promise.all(actions.map(createEvent).map(append))
+  }
 
-  const storeAndProject = (action, projectionNamespace, condition) => new Promise((resolve, reject) => {
-    const event = createEvent(action)
-    when(projectionNamespace, event.timestamp, condition).then(resolve).catch(reject)
-    append(event).catch(reject)
+  const storeAndProject = (projectionNamespace, condition) => (actions) => new Promise((resolve, reject) => {
+    actions = isArray(actions) ? actions : [actions]
+    const events = actions.map(createEvent)
+    when(projectionNamespace, events[events.length - 1].timestamp, condition).then(resolve).catch(reject)
+    Promise.all(events.map(append)).catch(reject)
   })
 
   keys(projectors).forEach(projector => addProjector(projector, projectors[projector]))
