@@ -23,16 +23,19 @@ export default (path) => {
     }
   }
 
+  const missingTimestamps = (events) => 
+    events.map(({timestamp}) => Boolean(timestamp)).filter(x => !x).length > 0
+
   const append = (events) => new Promise((resolve, reject) => {
-    if (!timestamp) reject(new Error('Cannot append Event: Missing timestamp'))
     events = isArray(events) ? events : [events]
+    if (missingTimestamps(events)) reject(new Error('Cannot append Event: Missing timestamp'))
     eventStore.batch(events.map((value) => ({
       type: 'put',
       key: value.timestamp,
       value
     })), (err) => {
       if (err) reject(err)
-      resolve(timestamp)
+      resolve(events[events.length - 1].timestamp)
     })
   })
 
