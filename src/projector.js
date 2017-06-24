@@ -44,7 +44,6 @@ const updateWatchers = (watchers, updates = {}) => ({fn, namespace, watchTimesta
 export default (path, getEvents, VERSION = '1') => {
   const watchers = {}
   const projectors = {}
-  const projecting = {}
   const projector = levelup(path, {valueEncoding: 'json'})
 
   projector.on('batch', (projections) => {
@@ -58,39 +57,22 @@ export default (path, getEvents, VERSION = '1') => {
     projectors[namespace] = lens
   }
 
+  const project = (version) => () =>
+    Promise.all(keys(projectors).map((namespace) => {
+      get(namespace, version)
+        .then(runProjection(version))
+    }))
+
+  const projectNightly = () => {
+    project(`${NIGHTLY}:${VERSION}`)
+      .then(() => runNightly(projectNightly))
+  }
+  runNightly(projectNightly)
+
   const runProjection = (version) => ({namespace, timestamp, projection} = {}) =>
     getEvents(since(timestamp))
       .then(createSnapshot(namespace, projection))
       .then(storeSnapshot(version))
-
-  const project = (version) => () => {
-    keys(projectors).forEach((namespace) => {
-      if (projecting[namespace]) return
-      projecting[namespace] = true
-      get(namespace, version)
-        .then(runProjection(version))
-        .then(() => {
-          delete projecting[namespace]
-        })
-        .catch((err) => {
-          delete projecting[namespace]
-          throw err
-        })
-    })
-  }
-
-  const projectNightly = () => {
-    project(`${NIGHTLY}:${VERSION}`)
-    runNightly(projectNightly)
-  }
-  runNightly(projectNightly)
-
-  // Possible future enhancement:
-  // store timestamps and keys of previous projections under NAMESPACE:HISTORY : {timestamp: key}
-  // use key to fetch latest.
-  // if latest > event, fetch history, find latest timestamp which is < event
-  // use that key to fetch projection from which to reproject
-  // ^ useful if size of nightly data is huge
 
   const getProjection = (namespace) =>
     get(namespace).then(({projection} = {}) => projection)
@@ -128,7 +110,6 @@ export default (path, getEvents, VERSION = '1') => {
       value
     }]
     projector.batch(data, (err) => {
-      delete projecting[value.namespace]
       if (err) reject(err)
       resolve(key)
     })
