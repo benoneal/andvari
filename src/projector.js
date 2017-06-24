@@ -20,33 +20,45 @@ const runNightly = (fn) => {
 const SAFE_INT = '000000000000000'
 const leftPad = (str = '', pad = SAFE_INT) => (pad + str).substring(str.length)
 const since = (timestamp) => {
-  if (!timestamp) return 
+  if (!timestamp) return
   const left = timestamp.slice(0, -SAFE_INT.length)
   const right = timestamp.slice(-SAFE_INT.length, timestamp.length)
   return left + leftPad(parseInt(right) + 1 + '')
 }
 
-export default (path, getEvents) => {
+const hasProjectionData = ({value: {projection}}) => Boolean(projection)
+const mapProjectionUpdates = (acc, {value: {namespace, timestamp, projection}}) => ({
+  ...acc, 
+  [namespace]: {timestamp, projection}
+})
+
+const updateWatchers = (watchers, updates = {}) => ({fn, namespace, watchTimestamp}) => {
+  if (!updates[namespace]) return
+  const {projection, timestamp} = updates[namespace]
+  fn(projection, timestamp)
+    .then(({keepWatching} = {}) => {
+      if (!keepWatching) delete watchers[watchTimestamp]
+    })
+}
+
+export default (path, getEvents, VERSION = '1') => {
   const watchers = {}
   const projectors = {}
   const projecting = {}
   const projector = levelup(path, {valueEncoding: 'json'})
 
-  projector.on('put', (snapshot, {timestamp, projection}) => 
-    projection && values(watchers).forEach(({fn, namespace, watchTimestamp}) => 
-      snapshot.split(':')[0] === namespace && fn(projection, timestamp)
-        .then(({keepWatching}) => {
-          if (keepWatching) return
-          delete watchers[watchTimestamp]
-        })
-    )
-  )
+  projector.on('batch', (projections) => {
+    const updates = projections.filter(hasProjectionData)
+      .reduce(mapProjectionUpdates, {})
+
+     values(watchers).forEach(updateWatchers(watchers, updates))
+  })
 
   const addProjector = (namespace, lens) => {
     projectors[namespace] = lens
   }
 
-  const runProjection = (version) => ({namespace, timestamp, projection} = {}) => 
+  const runProjection = (version) => ({namespace, timestamp, projection} = {}) =>
     getEvents(since(timestamp))
       .then(createSnapshot(namespace, projection))
       .then(storeSnapshot(version))
@@ -57,7 +69,9 @@ export default (path, getEvents) => {
       projecting[namespace] = true
       get(namespace, version)
         .then(runProjection(version))
-        .then(() => {delete projecting[namespace]})
+        .then(() => {
+          delete projecting[namespace]
+        })
         .catch((err) => {
           delete projecting[namespace]
           throw err
@@ -66,26 +80,28 @@ export default (path, getEvents) => {
   }
 
   const projectNightly = () => {
-    project(NIGHTLY)
+    project(`${NIGHTLY}:${VERSION}`)
     runNightly(projectNightly)
   }
   runNightly(projectNightly)
 
-  // Possible future enhancement: 
+  // Possible future enhancement:
   // store timestamps and keys of previous projections under NAMESPACE:HISTORY : {timestamp: key}
   // use key to fetch latest.
   // if latest > event, fetch history, find latest timestamp which is < event
   // use that key to fetch projection from which to reproject
   // ^ useful if size of nightly data is huge
 
-  const getProjection = (namespace) => 
+  const getProjection = (namespace) =>
     get(namespace).then(({projection} = {}) => projection)
 
-  const get = (namespace, version = LATEST, fallback = NIGHTLY) => new Promise((resolve, reject) => {
+  const get = (namespace, version = `${LATEST}:${VERSION}`, fallback = `${NIGHTLY}:${VERSION}`) => new Promise((resolve, reject) => {
     projector.get(`${namespace}:${version}`, (err, data) => {
-      if (err && !err.notFound) return reject(err)
-      if (err.notFound && (version === fallback)) return resolve({namespace})
-      if (err.notFound) return resolve(get(namespace, fallback))
+      if (err) {
+        if (!err.notFound) return reject(err)
+        if (version === fallback) return resolve({namespace})
+        return resolve(get(namespace, fallback))
+      }
       if (typeof data === 'string') return resolve(get(...data.split(':')))
       if (data.projection) return resolve(data)
       reject(new Error(`Cannot find projection for ${namespace}`))
@@ -118,14 +134,17 @@ export default (path, getEvents) => {
     })
   })
 
-  const when = (namespace, eTimestamp, condition = () => true) => 
-    new Promise((resolve, reject) => {
-      watch(namespace, (projection, ssTimestamp) => new Promise((res) => {
-        if (ssTimestamp >= eTimestamp && condition(projection)) {
-          resolve(projection)
-          res()
-        }
-      }))
+  const matchProjection = (timestamp, condition, cb) => (projection, ssTimestamp) =>
+    new Promise((resolve) => {
+      if (ssTimestamp >= timestamp && condition(projection)) {
+        cb(projection)
+        resolve()
+      }
+    })
+
+  const when = (namespace, eTimestamp, condition = () => true) =>
+    new Promise((resolve) => {
+      watch(namespace, matchProjection(eTimestamp, condition, resolve))
     })
 
   const watch = (namespace, fn) => {
@@ -134,9 +153,9 @@ export default (path, getEvents) => {
   }
 
   return {
-    watch, 
+    watch,
     when,
-    project: project(LATEST), 
+    project: project(`${LATEST}:${VERSION}`),
     getProjection,
     addProjector
   }

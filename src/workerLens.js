@@ -2,13 +2,13 @@ const inProgressOrDone = ({locked, succeeded}, id) => (
   (locked && locked[id]) || (succeeded && succeeded[id])
 )
 
-const queue = (projection, {id, ...payload}) => 
+const queue = (projection, {id, ...payload}) =>
   inProgressOrDone(projection, id) ? projection : ({
     ...projection,
     pending: {
       ...projection.pending,
       [id]: {
-        id, 
+        id,
         ...payload,
         attempts: 1
       }
@@ -19,7 +19,7 @@ const queue = (projection, {id, ...payload}) =>
     }
   })
 
-const lock = (projection, {id, processorId}) => 
+const lock = (projection, {id, processorId}) =>
   !projection.pending[id] ? projection : ({
     ...projection,
     locked: {
@@ -35,7 +35,7 @@ const lock = (projection, {id, processorId}) =>
     }
   })
 
-const success = (projection, {id}) => 
+const success = (projection, {id}) =>
   !projection.locked[id] ? projection : ({
     ...projection,
     succeeded: {
@@ -51,7 +51,7 @@ const success = (projection, {id}) =>
     }
   })
 
-const failure = (projection, {id, error}) => 
+const failure = (projection, {id, error}) =>
   !projection.locked[id] ? projection : ({
     ...projection,
     failed: {
@@ -68,7 +68,7 @@ const failure = (projection, {id, error}) =>
     }
   })
 
-const retry = (projection, {id, ...payload}) => 
+const retry = (projection, {id, ...payload}) =>
   !projection.failed[id] ? projection : ({
     ...projection,
     pending: {

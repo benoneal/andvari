@@ -7,16 +7,16 @@ export default (path) => {
   const listeners = []
   const eventStore = levelup(path, {valueEncoding: 'json'})
 
-  eventStore.on('put', (_, event) => 
-    listeners.forEach((listener) => 
-      listener(event, getEvents)
+  eventStore.on('batch', (events) =>
+    listeners.forEach((listener) =>
+      listener(events, getEvents)
     )
   )
 
   const createEvent = ({type, payload}) => {
     if (!type || !payload) throw new Error('Invalid Action provided. Must conform to shape: {type, payload}')
     return {
-      type, 
+      type,
       payload: {
         ...payload,
         timestamp: Date.now()
@@ -25,7 +25,7 @@ export default (path) => {
     }
   }
 
-  const missingTimestamps = (events) => 
+  const missingTimestamps = (events) =>
     events.map(({timestamp}) => Boolean(timestamp)).filter(x => !x).length > 0
 
   const append = (events) => new Promise((resolve, reject) => {
@@ -36,7 +36,7 @@ export default (path) => {
       key: value.timestamp,
       value
     })), (err) => {
-      if (err) reject(err)
+      if (err) return reject(err)
       resolve(events[events.length - 1].timestamp)
     })
   })

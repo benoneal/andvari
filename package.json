@@ -1,6 +1,6 @@
 {
   "name": "andvari",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "description": "Event sourcing for node.js",
   "repository": "https://github.com/benoneal/andvari",
   "main": "dist/index.js",
@@ -8,7 +8,7 @@
     "prepublish": "mkdir dist && babel src --out-dir dist",
     "size": "npm run prepublish && bundle-size ./",
     "lint": "standard",
-    "test": "standard && mocha"
+    "test": "mocha"
   },
   "keywords": [
     "event sourcing",

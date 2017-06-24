@@ -7,25 +7,24 @@ import createWorkerLens from './workerLens'
 const {keys} = Object
 const {isArray} = Array
 
-export default ({eventStorePath, projectionsPath, projectors}) => {
+export default ({eventStorePath, projectionsPath, projectors, version}) => {
   if (!eventStorePath || !projectionsPath || !projectors) {
     throw new Error('Andvari requires eventStorePath, projectionsPath, and projectors map')
-    return 
   }
 
   const {
-    createEvent, 
-    listen, 
-    append, 
+    createEvent,
+    listen,
+    append,
     getEvents
   } = initEventStore(eventStorePath)
   const {
-    watch, 
+    watch,
     when,
-    project, 
+    project,
     getProjection,
     addProjector
-  } = initProjections(projectionsPath, getEvents)
+  } = initProjections(projectionsPath, getEvents, version)
 
   const store = (actions) => {
     actions = isArray(actions) ? actions : [actions]
@@ -42,13 +41,13 @@ export default ({eventStorePath, projectionsPath, projectors}) => {
   keys(projectors).forEach(projector => addProjector(projector, projectors[projector]))
 
   const createWorker = ({
-    namespace, 
+    namespace,
     event,
-    condition = () => true, 
-    perform, 
-    onSuccess, 
+    condition = () => true,
+    perform,
+    onSuccess,
     onError,
-    retries, 
+    retries,
     timeout
   }) => {
     if (!namespace || !event || typeof perform !== 'function' || typeof onSuccess !== 'function' || typeof onError !== 'function') {

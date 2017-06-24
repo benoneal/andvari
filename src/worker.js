@@ -42,10 +42,10 @@ export default ({
   }
 
   watch(namespace, ({
-    pending = {}, 
-    locked = {}, 
+    pending = {},
+    locked = {},
     failed = {}
-  }) => new Promise(() => {
+  }) => new Promise((resolve) => {
     const firstPending = values(pending).filter(Boolean)[0]
     firstPending && requestLock(firstPending)
 
