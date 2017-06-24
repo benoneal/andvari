@@ -3,7 +3,6 @@ import initEventStore from './eventStore'
 import initProjections from './projector'
 import initWorker from './worker'
 import createWorkerLens from './workerLens'
-export {default as createLens, createAction} from './lenses'
 
 const {keys} = Object
 const {isArray} = Array

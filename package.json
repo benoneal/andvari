@@ -1,6 +1,6 @@
 {
   "name": "andvari",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Event sourcing for node.js",
   "repository": "https://github.com/benoneal/andvari",
   "main": "dist/index.js",
