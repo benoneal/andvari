@@ -1,6 +1,8 @@
 import levelup from 'level'
 import now from 'nano-time'
 
+const {isArray} = Array
+
 export default (path) => {
   const listeners = []
   const eventStore = levelup(path, {valueEncoding: 'json'})
