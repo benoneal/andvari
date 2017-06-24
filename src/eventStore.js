@@ -2,7 +2,14 @@ import levelup from 'level'
 import now from 'nano-time'
 
 export default (path) => {
+  const listeners = []
   const eventStore = levelup(path, {valueEncoding: 'json'})
+
+  eventStore.on('put', (_, event) => 
+    listeners.forEach((listener) => 
+      listener(event, getEvents)
+    )
+  )
 
   const createEvent = ({type, payload}) => {
     if (!type || !payload) throw new Error('Invalid Action provided. Must conform to shape: {type, payload}')
@@ -16,9 +23,14 @@ export default (path) => {
     }
   }
 
-  const append = ({timestamp, ...event}) => new Promise((resolve, reject) => {
+  const append = (events) => new Promise((resolve, reject) => {
     if (!timestamp) reject(new Error('Cannot append Event: Missing timestamp'))
-    eventStore.put(timestamp, {timestamp, ...event}, (err) => {
+    events = isArray(events) ? events : [events]
+    eventStore.batch(events.map((value) => ({
+      type: 'put',
+      key: value.timestamp,
+      value
+    })), (err) => {
       if (err) reject(err)
       resolve(timestamp)
     })
@@ -32,7 +44,7 @@ export default (path) => {
       .on('error', reject)
   })
 
-  const listen = (fn) => eventStore.on('put', (_, event) => fn(event, getEvents))
+  const listen = (fn) => listeners.push(fn)
 
   return {
     createEvent,

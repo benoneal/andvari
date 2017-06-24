@@ -45,7 +45,7 @@ export default ({
     pending = {}, 
     locked = {}, 
     failed = {}
-  }) => {
+  }) => new Promise(() => {
     const firstPending = values(pending).filter(Boolean)[0]
     firstPending && requestLock(firstPending)
 
@@ -57,5 +57,7 @@ export default ({
     values(failed)
       .filter(Boolean)
       .forEach(retryFailed)
-  })
+
+    resolve({keepWatching: true})
+  }))
 }
