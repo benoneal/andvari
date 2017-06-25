@@ -65,9 +65,15 @@ export default ({eventStorePath, projectionsPath, projectors, version}) => {
       watch,
       getProjection
     })
-    listen(({type, payload}) => {
-      if (type !== event || !condition(payload)) return
-      store({type: `${namespace}:queue`, payload: {...payload, id: payload.id || uuid()}})
+    listen((events) => {
+      const queue = events.reduce((acc, {value: {type, payload}}) => (
+        type === event && condition(payload) ? [...acc, {
+          type: `${namespace}:queue`, 
+          payload: {...payload, id: payload.id || uuid()}
+        }] : acc
+      ), [])
+
+      queue.length && store(queue)
     })
   }
 
