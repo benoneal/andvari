@@ -64,7 +64,7 @@ export default (path, getEvents, VERSION = '1') => {
     }))
 
   const projectNightly = () => {
-    project(`${NIGHTLY}:${VERSION}`)
+    project(`${NIGHTLY}:${VERSION}`)()
       .then(() => runNightly(projectNightly))
   }
   runNightly(projectNightly)
