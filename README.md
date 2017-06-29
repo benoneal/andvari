@@ -120,3 +120,10 @@ createWorker <> (<WorkerConfig>)
 ```
 
 You can use all the redux patterns you may be used to for creating your actions and projection reducers. Actions must conform to the spec above, but reducers can return a projection of any type/shape you require. Your reducers can handle as many/few action types as they need: all events are passed through all provided `projector` reducers. 
+
+##### Future additions
+
+- Idempotent event seeding
+- Spin up workers and deferred in child processes
+- Hooks to persist/restore nightly backups to/from external source
+- TCP/HTTP client interface for standalone server

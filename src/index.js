@@ -3,8 +3,9 @@ import initEventStore from './eventStore'
 import initProjections from './projector'
 import initWorker from './worker'
 import createWorkerLens from './workerLens'
+import deferred from './deferred'
 
-const {keys} = Object
+const {keys, freeze} = Object
 const {isArray} = Array
 
 export default ({eventStorePath, projectionsPath, projectors, version}) => {
@@ -77,13 +78,33 @@ export default ({eventStorePath, projectionsPath, projectors, version}) => {
     })
   }
 
+  const onProjectionChange = (namespace, handleChange) => {
+    getProjection(namespace).then((projection) => {
+      let prevProjection = projection
+      
+      watch(namespace, (projection) => new Promise((resolve) => {
+        handleChange({prevProjection, projection}, getProjection, store)
+        prevProjection = projection
+        resolve({keepWatching: true})
+      }))
+    })
+  }
+
+  const storeDeferred = deferred({
+    store,
+    onProjectionChange,
+    getProjection,
+    addProjector
+  })
+
   listen(project)
 
-  return {
+  return freeze({
     store,
     storeAndProject,
     getProjection,
-    watch,
-    createWorker
-  }
+    onProjectionChange,
+    createWorker,
+    storeDeferred
+  })
 }

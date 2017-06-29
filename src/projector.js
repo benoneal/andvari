@@ -1,11 +1,11 @@
 import levelup from 'level'
 import now from 'nano-time'
 
-const {keys, values} = Object
+const {keys, values, freeze} = Object
 
-const LATEST = 'LATEST'
 const NIGHTLY = 'NIGHTLY'
 
+const exists = (v) => v !== undefined && v !== null 
 const msTillMidnight = () => {
   const day = new Date()
   day.setHours(24, 0, 0, 0)
@@ -41,7 +41,7 @@ const updateWatchers = (watchers, updates = {}) => ({fn, namespace, watchTimesta
     })
 }
 
-export default (path, getEvents, VERSION = '1') => {
+export default (path, getEvents, REVISION = '1') => {
   const watchers = {}
   const projectors = {}
   const projector = levelup(path, {valueEncoding: 'json'})
@@ -64,7 +64,7 @@ export default (path, getEvents, VERSION = '1') => {
     }))
 
   const projectNightly = () => {
-    project(`${NIGHTLY}:${VERSION}`)()
+    project(`:${NIGHTLY}`)()
       .then(() => runNightly(projectNightly))
   }
   runNightly(projectNightly)
@@ -77,16 +77,15 @@ export default (path, getEvents, VERSION = '1') => {
   const getProjection = (namespace) =>
     get(namespace).then(({projection} = {}) => projection)
 
-  const get = (namespace, version = `${LATEST}:${VERSION}`, fallback = `${NIGHTLY}:${VERSION}`) => new Promise((resolve, reject) => {
-    projector.get(`${namespace}:${version}`, (err, data) => {
+  const get = (namespace, version = ``, fallback = `:${NIGHTLY}`) => new Promise((resolve, reject) => {
+    projector.get(`${namespace}_${REVISION}${version}`, (err, data) => {
       if (err) {
         if (!err.notFound) return reject(err)
         if (version === fallback) return resolve({namespace})
         return resolve(get(namespace, fallback))
       }
-      if (typeof data === 'string') return resolve(get(...data.split(':')))
-      if (data.projection) return resolve(data)
-      reject(new Error(`Cannot find projection for ${namespace}`))
+      if (exists(data.projection)) return resolve(data)
+      reject(new Error(`Cannot find projection for ${namespace}_${REVISION}${version}`))
     })
   })
 
@@ -97,19 +96,14 @@ export default (path, getEvents, VERSION = '1') => {
     return resolve({namespace, timestamp, projection})
   })
 
-  const storeSnapshot = (version) => (value) => new Promise((resolve, reject) => {
+  const storeSnapshot = (version = '') => (value) => new Promise((resolve, reject) => {
     if (!value) return resolve()
-    const key = `${value.namespace}:${value.timestamp}`
-    const data = [{
-      type: 'put',
-      key: `${value.namespace}:${version}`,
-      value: key
-    }, {
+    const key = `${value.namespace}_${REVISION}${version}`
+    projector.batch([{
       type: 'put',
       key,
       value
-    }]
-    projector.batch(data, (err) => {
+    }], (err) => {
       if (err) reject(err)
       resolve(key)
     })
@@ -133,11 +127,11 @@ export default (path, getEvents, VERSION = '1') => {
     watchers[watchTimestamp] = {fn, namespace, watchTimestamp}
   }
 
-  return {
+  return freeze({
     watch,
     when,
-    project: project(`${LATEST}:${VERSION}`),
+    project: project(),
     getProjection,
     addProjector
-  }
+  })
 }

@@ -1,6 +1,7 @@
 import levelup from 'level'
 import now from 'nano-time'
 
+const {freeze} = Object
 const {isArray} = Array
 
 export default (path) => {
@@ -51,10 +52,10 @@ export default (path) => {
 
   const listen = (fn) => listeners.push(fn)
 
-  return {
+  return freeze({
     createEvent,
     append,
     getEvents,
     listen
-  }
+  })
 }
