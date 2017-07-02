@@ -122,7 +122,10 @@ export default (path, initialProjectors, getEvents, REVISION = '1') => {
   // Projections
   const getProjection = (namespace) => Promise.resolve(projections[namespace] && projections[namespace].projection)
   
-  const addProjector = (namespace, lens) => projectors[namespace] = lens
+  const addProjector = (namespace, lens) => {
+    projectors[namespace] = lens
+    projections[namespace] = {namespace, timestamp: undefined, projection: undefined}
+  }
 
   const projectEvents = (events = [], lens, {timestamp, projection, namespace} = {}) => ({
     namespace,
