@@ -65,7 +65,7 @@ export default ({eventStorePath, projectionsPath, projectors, version}) => {
       getProjection
     })
     listen((events) => {
-      const queue = events.reduce((acc, {value: {type, payload}}) => (
+      const queue = events.reduce((acc, {type, payload}) => (
         type === event && condition(payload) ? [...acc, {
           type: `${namespace}:queue`, 
           payload: {...payload, id: payload.id || uuid()}
