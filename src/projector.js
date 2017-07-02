@@ -124,16 +124,16 @@ export default (path, initialProjectors, getEvents, REVISION = '1') => {
   
   const addProjector = (namespace, lens) => projectors[namespace] = lens
 
-  const projectEvents = (events = [], {timestamp, projection, namespace} = {}) => ({
+  const projectEvents = (events = [], lens, {timestamp, projection, namespace} = {}) => ({
     namespace,
     timestamp: events.length ? events[events.length - 1].timestamp : timestamp,
-    projection: events.reduce(projectors[namespace], projection)
+    projection: events.reduce(lens, projection)
   })
 
   const createProjections = (events) => 
     keys(projectors).reduce((acc, namespace) => ({
       ...acc,
-      [namespace]: projectEvents(events, projections[namespace])
+      [namespace]: projectEvents(events, projectors[namespace], projections[namespace])
     }), {})
 
   const applyProjections = (shouldUpdateWatchers) => (newProjections = {}) => 
