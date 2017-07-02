@@ -20,7 +20,7 @@ As a result, Andvari has some really powerful advantages over other event sourci
 - You can completely restructure your projections based on evolving data access requirements as simply as refactoring your reducer functions. When you update the version supplied to Andvari, your next deploy will reproject the entire history of events with your new projection logic (and you don't lose the old projections either).
 - All the hard work is done for you. In building a production app, you merely need to define projection reducers that can process the events you store. Andvari wraps up all the eventual consistency concerns with a convenient promise-based API. `storeAndProject` allows you to store an event then have the promise resolve with the projection you want when it is updated with that event. 
 
-However, it's worth noting that Andvari is not currently suitable if your requirements demand distributed processing / lateral scaling. It is single-process and single source-of-truth, but it's also very fast, and is built on levelDB. 
+However, it's worth noting that Andvari is not currently suitable if your requirements demand distributed processing / lateral scaling. It is single-process and single source-of-truth, but it's also fast and built on levelDB. 
 
 ## How to use
 
@@ -124,6 +124,5 @@ You can use all the redux patterns you may be used to for creating your actions 
 ##### Future additions
 
 - Idempotent event seeding
-- Spin up workers and deferred in child processes
 - Hooks to persist/restore nightly backups to/from external source
 - TCP/HTTP client interface for standalone server

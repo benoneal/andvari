@@ -58,9 +58,10 @@ describe('Andvari', () => {
       storeToTest([11, 12, 13].map(createTestEvent)),
       storeToTest2([14, 15, 16].map(createTestEvent))
     ]).then(([test, test2]) => {
-      const expected = testVals.concat([11, 12, 13, 14, 15, 16])
+      const expected = testVals.concat([11, 12, 13])
+      const expected2 = testVals.concat([11, 12, 13, 14, 15, 16])
       assertEqualTo(expected)(test)
-      assertEqualTo(expected.reduce(sum, 0))(test2)
+      assertEqualTo(expected2.reduce(sum, 0))(test2)
     })
   )
 
@@ -129,7 +130,7 @@ describe('Andvari', () => {
         .then(runSpeedTest)
 
     return runSpeedTest().then((iterations) => {
-      assert(iterations > 400)
+      assert(iterations > 12000)
     })
   })
 })

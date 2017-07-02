@@ -3,9 +3,9 @@ import now from 'nano-time'
 
 const {keys, values, freeze} = Object
 
+const PREVIOUS = 'PREVIOUS'
 const NIGHTLY = 'NIGHTLY'
 
-const exists = (v) => v !== undefined && v !== null 
 const msTillMidnight = () => {
   const day = new Date()
   day.setHours(24, 0, 0, 0)
@@ -26,88 +26,45 @@ const since = (timestamp) => {
   return left + leftPad(parseInt(right) + 1 + '')
 }
 
-const hasProjectionData = ({value: {projection}}) => Boolean(projection)
-const mapProjectionUpdates = (acc, {value: {namespace, timestamp, projection}}) => ({
-  ...acc, 
-  [namespace]: {timestamp, projection}
-})
+const pipeReducer = (acc, fn) => typeof fn === 'function' ? fn(acc) : acc
+const pipe = (...fns) => (arg) => fns.reduce(pipeReducer, arg)
 
-const updateWatchers = (watchers, updates = {}) => ({fn, namespace, watchTimestamp}) => {
-  if (!updates[namespace]) return
-  const {projection, timestamp} = updates[namespace]
-  fn(projection, timestamp)
-    .then(({keepWatching} = {}) => {
-      if (!keepWatching) delete watchers[watchTimestamp]
-    })
-}
+export default (path, initialProjectors, getEvents, REVISION = '1') => {
+  const projectors = initialProjectors || {}
+  const projections = {}
+  const snapshots = levelup(path, {valueEncoding: 'json'})
 
-export default (path, getEvents, REVISION = '1') => {
+  // Handle sync updates during initialization
+  const queue = []
+  let initialized = false
+  const buffer = (fn) => (...args) => new Promise((resolve) => {
+    if (initialized) return resolve(fn(...args))
+    queue.push([fn, args, resolve])
+  })
+  const flushQueue = () => queue.forEach(([fn, args, resolve]) => resolve(fn(...args)))
+
+  // Watchers
   const watchers = {}
-  const projectors = {}
-  const projector = levelup(path, {valueEncoding: 'json'})
+  const cleanUpWatcher = (timestamp) => 
+    ({keepWatching} = {}) => 
+      !keepWatching && delete watchers[timestamp]
 
-  projector.on('batch', (projections) => {
-    const updates = projections.filter(hasProjectionData)
-      .reduce(mapProjectionUpdates, {})
+  const watchersFor = (projectionNamespace) => 
+    ({namespace}) => projectionNamespace === namespace
 
-     values(watchers).forEach(updateWatchers(watchers, updates))
-  })
+  const previousProjection = (namespace) => 
+    projections[`${namespace}:${PREVIOUS}`] && projections[`${namespace}:${PREVIOUS}`].projection
 
-  const addProjector = (namespace, lens) => {
-    projectors[namespace] = lens
+  const updateWatchers = ({namespace, timestamp, projection}) => {
+    values(watchers).filter(watchersFor(namespace))
+      .forEach(({fn, watchTimestamp}) => 
+        fn(projection, timestamp, previousProjection(namespace)).then(cleanUpWatcher(watchTimestamp)))
   }
 
-  const project = (version) => () =>
-    Promise.all(keys(projectors).map((namespace) => {
-      get(namespace, version)
-        .then(runProjection(version))
-    }))
-
-  const projectNightly = () => {
-    project(`:${NIGHTLY}`)()
-      .then(() => runNightly(projectNightly))
+  const watch = (namespace, fn) => {
+    const watchTimestamp = now()
+    watchers[watchTimestamp] = {fn, namespace, watchTimestamp}
   }
-  runNightly(projectNightly)
-
-  const runProjection = (version) => ({namespace, timestamp, projection} = {}) =>
-    getEvents(since(timestamp))
-      .then(createSnapshot(namespace, projection))
-      .then(storeSnapshot(version))
-
-  const getProjection = (namespace) =>
-    get(namespace).then(({projection} = {}) => projection)
-
-  const get = (namespace, version = ``, fallback = `:${NIGHTLY}`) => new Promise((resolve, reject) => {
-    projector.get(`${namespace}_${REVISION}${version}`, (err, data) => {
-      if (err) {
-        if (!err.notFound) return reject(err)
-        if (version === fallback) return resolve({namespace})
-        return resolve(get(namespace, fallback))
-      }
-      if (exists(data.projection)) return resolve(data)
-      reject(new Error(`Cannot find projection for ${namespace}_${REVISION}${version}`))
-    })
-  })
-
-  const createSnapshot = (namespace, oldProjection) => (events = []) => new Promise((resolve) => {
-    const timestamp = events[events.length - 1].timestamp
-    const projection = events.reduce(projectors[namespace], oldProjection)
-    if (projection === oldProjection) return resolve()
-    return resolve({namespace, timestamp, projection})
-  })
-
-  const storeSnapshot = (version = '') => (value) => new Promise((resolve, reject) => {
-    if (!value) return resolve()
-    const key = `${value.namespace}_${REVISION}${version}`
-    projector.batch([{
-      type: 'put',
-      key,
-      value
-    }], (err) => {
-      if (err) reject(err)
-      resolve(key)
-    })
-  })
 
   const matchProjection = (timestamp, condition, cb) => (projection, ssTimestamp) =>
     new Promise((resolve) => {
@@ -117,21 +74,90 @@ export default (path, getEvents, REVISION = '1') => {
       }
     })
 
-  const when = (namespace, eTimestamp, condition = () => true) =>
-    new Promise((resolve) => {
-      watch(namespace, matchProjection(eTimestamp, condition, resolve))
+  const when = (namespace, eTimestamp, condition = () => true) => new Promise((resolve) => {
+    watch(namespace, matchProjection(eTimestamp, condition, resolve))
+  })
+
+  // Manage Nightly builds
+  const getSnapshot = (namespace) => new Promise((resolve) => {
+    snapshots.get(`${namespace}:${NIGHTLY}:${REVISION}`, (err, {timestamp, projection} = {}) =>
+      resolve({timestamp, projection, namespace}))
+  })
+
+  const buildProjectionsFromSnapshots = (snapshots) => snapshots.reduce((acc, snapshot) => ({
+    ...acc,
+    [snapshot.namespace]: snapshot
+  }), {})
+
+  const restoreSnapshots = () => 
+    Promise.all(keys(projectors).map(getSnapshot))
+      .then(buildProjectionsFromSnapshots)
+      .then(applyProjections(false))
+      .then(getDaysEvents)
+      .then(createProjections)
+      .then(applyProjections(false))
+      .then(() => {
+        initialized = true
+        flushQueue()
+      })
+
+  const getDaysEvents = () => new Promise((resolve) => { 
+    snapshots.get('nightlyTimestamp', (err, timestamp) => {
+      getEvents(since(timestamp)).then(resolve)
+  })
+
+  const updateLastNightly = (events) => new Promise((resolve) => {
+    snapshots.put('nightlyTimestamp', events[events.length - 1].timestamp, () => 
+      resolve(events))
+  })
+
+  const persistProjections = (newProjections) => 
+    snapshots.batch(values(newProjections).map((value) => ({
+      type: 'put', 
+      key: `${value.namespace}:${NIGHTLY}:${REVISION}`, 
+      value
+    })))
+  })
+
+  // Projections
+  const getProjection = (namespace) => Promise.resolve(projections[namespace] && projections[namespace].projection)
+  
+  const addProjector = (namespace, lens) => projectors[namespace] = lens
+
+  const projectEvents = (events = [], {timestamp, projection, namespace} = {}) => ({
+    namespace,
+    timestamp: events.length ? events[events.length - 1].timestamp : timestamp,
+    projection: events.reduce(projectors[namespace], projection)
+  })
+
+  const createProjections = (events) => 
+    keys(projectors).reduce((acc, namespace) => ({
+      ...acc,
+      [namespace]: projectEvents(events, projections[namespace])
+    }), {})
+
+  const applyProjections = (shouldUpdateWatchers) => (newProjections = {}) => 
+    values(newProjections).forEach(({namespace, timestamp, projection} = {}) => {
+      if (!namespace || projections[namespace] && projection === projections[namespace].projection) return
+      projections[`${namespace}:${PREVIOUS}`] = projections[namespace]
+      projections[namespace] = {namespace, timestamp, projection}
+      shouldUpdateWatchers && updateWatchers({namespace, timestamp, projection})
     })
 
-  const watch = (namespace, fn) => {
-    const watchTimestamp = now()
-    watchers[watchTimestamp] = {fn, namespace, watchTimestamp}
+  const projectNightly = () => {
+    getDaysEvents().then(updateLastNightly)
+      .then(pipe(createProjections, persistProjections))
+    runNightly(projectNightly)
   }
+  runNightly(projectNightly)
+
+  restoreSnapshots()
 
   return freeze({
-    watch,
-    when,
-    project: project(),
-    getProjection,
-    addProjector
+    watch: buffer(watch),
+    when: buffer(when),
+    project: buffer(pipe(createProjections, applyProjections(true))),
+    getProjection: buffer(getProjection),
+    addProjector: buffer(addProjector)
   })
 }

@@ -8,9 +8,11 @@ export default (path) => {
   const listeners = []
   const eventStore = levelup(path, {valueEncoding: 'json'})
 
+  const eventData = (events) => events.map(({value, ...event}) => value ? value : event)
+
   eventStore.on('batch', (events) =>
     listeners.forEach((listener) =>
-      listener(events, getEvents)
+      listener(eventData(events), getEvents)
     )
   )
 

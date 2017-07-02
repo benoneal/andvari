@@ -3,7 +3,7 @@ import initEventStore from './eventStore'
 import initProjections from './projector'
 import initWorker from './worker'
 import createWorkerLens from './workerLens'
-import deferred from './deferred'
+import deferred, {deferredLens} from './deferred'
 
 const {keys, freeze} = Object
 const {isArray} = Array
@@ -25,7 +25,7 @@ export default ({eventStorePath, projectionsPath, projectors, version}) => {
     project,
     getProjection,
     addProjector
-  } = initProjections(projectionsPath, getEvents, version)
+  } = initProjections(projectionsPath, {...projectors, deferred: deferredLens}, getEvents, version)
 
   const store = (actions) => {
     actions = isArray(actions) ? actions : [actions]
@@ -38,8 +38,6 @@ export default ({eventStorePath, projectionsPath, projectors, version}) => {
     when(projectionNamespace, events[events.length - 1].timestamp, condition).then(resolve).catch(reject)
     append(events).catch(reject)
   })
-
-  keys(projectors).forEach(projector => addProjector(projector, projectors[projector]))
 
   const createWorker = ({
     namespace,
@@ -79,22 +77,16 @@ export default ({eventStorePath, projectionsPath, projectors, version}) => {
   }
 
   const onProjectionChange = (namespace, handleChange) => {
-    getProjection(namespace).then((projection) => {
-      let prevProjection = projection
-      
-      watch(namespace, (projection) => new Promise((resolve) => {
-        handleChange({prevProjection, projection}, getProjection, store)
-        prevProjection = projection
-        resolve({keepWatching: true})
-      }))
-    })
+    watch(namespace, (projection, _, prevProjection) => new Promise((resolve) => {
+      handleChange({prevProjection, projection}, getProjection, store)
+      resolve({keepWatching: true})
+    }))
   }
 
   const storeDeferred = deferred({
     store,
     onProjectionChange,
-    getProjection,
-    addProjector
+    getProjection
   })
 
   listen(project)

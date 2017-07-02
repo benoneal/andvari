@@ -1,5 +1,5 @@
 import uuid from 'uuid/v4'
-import deferredLens from './deferredLens'
+export {default as deferredLens} from './deferredLens'
 
 const {values} = Object
 const {isArray} = Array
@@ -63,11 +63,8 @@ const processNew = ({prevProjection, projection}, _, store) => {
 export default ({
   store,
   onProjectionChange,
-  getProjection,
-  addProjector
+  getProjection
 }) => {
-  addProjector(DEFERRED, deferredLens)
-
   getProjection(DEFERRED).then(processQueue(unwrap(store)))
 
   onProjectionChange(DEFERRED, processNew)
