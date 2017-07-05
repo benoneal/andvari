@@ -34,6 +34,7 @@ export default (path) => {
   const append = (events) => new Promise((resolve, reject) => {
     events = isArray(events) ? events : [events]
     if (missingTimestamps(events)) reject(new Error('Cannot append Event: Missing timestamp'))
+    if (!events.length) return resolve()
     eventStore.batch(events.map((value) => ({
       type: 'put',
       key: value.timestamp,
