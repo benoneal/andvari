@@ -96,6 +96,7 @@ All projection snapshots are versioned with whatever `version` string you have p
 createDB returns the following interface: 
 
 ```js
+seed <HashedActionID> (<Action: []: object>)
 store <NanosecondTimestamp> (<Action []: object>)
 storeAndProject <Projection> (<ProjectionNamespace: string>, <Condition: function>)(<Action []: object>)
 getProjection <Projection> (<ProjectionNamespace: string>)

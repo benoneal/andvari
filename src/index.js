@@ -4,6 +4,7 @@ import initProjections from './projector'
 import initWorker from './worker'
 import createWorkerLens from './workerLens'
 import deferred, {deferredLens} from './deferred'
+import serialize from './serialize'
 
 const {keys, freeze} = Object
 const {isArray} = Array
@@ -24,13 +25,25 @@ export default ({eventStorePath, projectionsPath, projectors, version}) => {
     when,
     project,
     getProjection,
-    addProjector
+    addProjector,
+    getSeeded,
+    setSeeded
   } = initProjections(projectionsPath, {...projectors, deferred: deferredLens}, getEvents, version)
 
   const store = (actions) => {
     actions = isArray(actions) ? actions : [actions]
     return append(actions.map(createEvent))
   }
+
+  const log = (n) => (d) => console.log(n, d) || d
+
+  const seed = (actions) =>
+    getSeeded()
+      .then((seeded) => actions.filter((action) => !seeded.includes(serialize(action))))
+      .then((actions) => {
+        append(actions.map(createEvent))
+        return setSeeded(actions.map(serialize))
+      })
 
   const storeAndProject = (projectionNamespace, condition) => (actions) => new Promise((resolve, reject) => {
     actions = isArray(actions) ? actions : [actions]
@@ -92,6 +105,7 @@ export default ({eventStorePath, projectionsPath, projectors, version}) => {
   listen(project)
 
   return freeze({
+    seed,
     store,
     storeAndProject,
     getProjection,

@@ -43,6 +43,16 @@ export default (path, initialProjectors, getEvents, REVISION = '1') => {
   })
   const flushQueue = () => queue.forEach(([fn, args, resolve]) => resolve(fn(...args)))
 
+  // Seeds
+  const getSeeded = () => new Promise((resolve) => {
+    snapshots.get('__seeded__', (err, seeded = []) => resolve(seeded))
+  })
+
+  const setSeeded = (newSeeds) => new Promise((resolve) => {
+    getSeeded().then((oldSeeds) =>
+      snapshots.put('__seeded__', [...oldSeeds, ...newSeeds], () =>  resolve(newSeeds)))
+  })
+
   // Watchers
   const watchers = {}
   const cleanUpWatcher = (timestamp) => 
@@ -102,12 +112,13 @@ export default (path, initialProjectors, getEvents, REVISION = '1') => {
       })
 
   const getDaysEvents = () => new Promise((resolve) => { 
-    snapshots.get('nightlyTimestamp', (err, timestamp) => {
+    snapshots.get('__nightlyTimestamp__', (err, timestamp) => {
       getEvents(since(timestamp)).then(resolve)
+    })
   })
 
   const updateLastNightly = (events) => new Promise((resolve) => {
-    snapshots.put('nightlyTimestamp', events[events.length - 1].timestamp, () => 
+    snapshots.put('__nightlyTimestamp__', events[events.length - 1].timestamp, () => 
       resolve(events))
   })
 
@@ -117,7 +128,6 @@ export default (path, initialProjectors, getEvents, REVISION = '1') => {
       key: `${value.namespace}:${NIGHTLY}:${REVISION}`, 
       value
     })))
-  })
 
   // Projections
   const getProjection = (namespace) => Promise.resolve(projections[namespace] && projections[namespace].projection)
@@ -147,6 +157,8 @@ export default (path, initialProjectors, getEvents, REVISION = '1') => {
       shouldUpdateWatchers && updateWatchers({namespace, timestamp, projection})
     })
 
+  const project = pipe(createProjections, applyProjections(true))
+
   const projectNightly = () => {
     getDaysEvents().then(updateLastNightly)
       .then(pipe(createProjections, persistProjections))
@@ -159,8 +171,10 @@ export default (path, initialProjectors, getEvents, REVISION = '1') => {
   return freeze({
     watch: buffer(watch),
     when: buffer(when),
-    project: buffer(pipe(createProjections, applyProjections(true))),
+    project: buffer(project),
     getProjection: buffer(getProjection),
-    addProjector: buffer(addProjector)
+    addProjector: buffer(addProjector),
+    getSeeded: buffer(getSeeded),
+    setSeeded: buffer(setSeeded)
   })
 }

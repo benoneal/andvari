@@ -4,6 +4,7 @@ import fs from 'fs'
 import path from 'path'
 
 import createDB from '../src'
+import serialize from '../src/serialize'
 
 const dbOptions = {
   eventStorePath: 'test/data/eventStore',
@@ -19,6 +20,7 @@ const dbOptions = {
 }
 
 const {
+  seed,
   store,
   storeAndProject,
   getProjection,
@@ -38,8 +40,17 @@ const testVals = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 const sum = (a, b) => a + b
 
 describe('Andvari', () => {
+  it('seeds events and will not reseed them', () => 
+    seed([1, 2, 3].map(createTestEvent))
+      .then(assertEqualTo([1, 2, 3].map(createTestEvent).map(serialize)))
+      .then(() => seed([2, 3, 4].map(createTestEvent)))
+      .then(assertEqualTo([4].map(createTestEvent).map(serialize)))
+      .then(() => seed([3, 4, 5].map(createTestEvent)))
+      .then(assertEqualTo([5].map(createTestEvent).map(serialize)))
+  )
+
   it('stores events and projects them', () =>
-    storeToTest(testVals.map(createTestEvent))
+    storeToTest([6, 7, 8, 9, 10].map(createTestEvent))
       .then(assertEqualTo(testVals))
   )
 
