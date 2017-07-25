@@ -99,13 +99,13 @@ export default (path, initialProjectors, getEvents, REVISION = '1') => {
     [snapshot.namespace]: snapshot
   }), {})
 
-  const restoreSnapshots = () => 
-    Promise.all(keys(projectors).map(getSnapshot))
+  const restoreSnapshots = (projectors, updateWatchers = false) => 
+    Promise.all(projectors.map(getSnapshot))
       .then(buildProjectionsFromSnapshots)
-      .then(applyProjections(false))
+      .then(applyProjections(updateWatchers))
       .then(getDaysEvents)
       .then(createProjections)
-      .then(applyProjections(false))
+      .then(applyProjections(updateWatchers))
       .then(() => {
         initialized = true
         flushQueue()
@@ -131,12 +131,7 @@ export default (path, initialProjectors, getEvents, REVISION = '1') => {
 
   // Projections
   const getProjection = (namespace) => Promise.resolve(projections[namespace] && projections[namespace].projection)
-  
-  const addProjector = (namespace, lens) => {
-    projectors[namespace] = lens
-    projections[namespace] = {namespace, timestamp: undefined, projection: undefined}
-  }
-
+ 
   const projectEvents = (events = [], lens, {timestamp, projection, namespace} = {}) => ({
     namespace,
     timestamp: events.length ? events[events.length - 1].timestamp : timestamp,
@@ -154,7 +149,7 @@ export default (path, initialProjectors, getEvents, REVISION = '1') => {
       if (!namespace || projections[namespace] && projection === projections[namespace].projection) return
       projections[`${namespace}:${PREVIOUS}`] = projections[namespace]
       projections[namespace] = {namespace, timestamp, projection}
-      shouldUpdateWatchers && updateWatchers({namespace, timestamp, projection})
+      shouldUpdateWatchers && updateWatchers(projections[namespace])
     })
 
   const project = pipe(createProjections, applyProjections(true))
@@ -166,14 +161,13 @@ export default (path, initialProjectors, getEvents, REVISION = '1') => {
   }
   runNightly(projectNightly)
 
-  restoreSnapshots()
+  restoreSnapshots(keys(projectors))
 
   return freeze({
     watch: buffer(watch),
     when: buffer(when),
     project: buffer(project),
     getProjection: buffer(getProjection),
-    addProjector: buffer(addProjector),
     getSeeded: buffer(getSeeded),
     setSeeded: buffer(setSeeded)
   })

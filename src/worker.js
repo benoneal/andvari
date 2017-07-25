@@ -1,62 +1,68 @@
 import uuid from 'uuid/v4'
 
-const {values} = Object
+const {keys, values} = Object
 
 export default ({
   namespace,
   perform,
+
   onSuccess,
   onError,
   retries = 0,
   timeout = 60000,
+
   store,
-  watch,
+  onProjectionChange,
   getProjection
 }) => {
-  const processing = {}
   const processId = uuid()
 
-  const requestLock = ({id}) => store({type: `${namespace}:lock`, payload: {id, processorId: processId}})
+  const createRetry = ({id}) => ({type: `${namespace}:retry`, payload: {id}})
+  const createSuccess = ({id}) => ({type: `${namespace}:success`, payload: {id}})
+  const createError = ({id, error}) => ({type: `${namespace}:failure`, payload: {id, error}})
+  const createLock = ({id}) => ({type: `${namespace}:lock`, payload: {id, processorId: processId}})
 
-  const processLocked = ({id, processorId, attempts, ...locked}) => {
-    processing[id] = true
+  const performWork = ({id, processorId, attempts, ...locked}) => {
     perform({id, ...locked}, getProjection)
       .then((res) => {
-        delete processing[id]
-        store({type: `${namespace}:success`, payload: {id}})
+        store(createSuccess({id}))
         onSuccess({id, ...locked, ...res}, store)
       })
       .catch((error) => {
-        delete processing[id]
-        store({type: `${namespace}:failure`, payload: {id, error}})
+        store(createError({id, error}))
         onError({id, ...locked, error}, store)
       })
   }
 
-  const retryFailed = ({id, attempts, timestamp, ...event}) => {
-    if (Date.now() > timestamp + timeout) {
-      onError({...event, id, timestamp, error: 'timeout'}, store)
-    } else if (attempts <= retries) {
-      store({type: `${namespace}:retry`, payload: {id}})
-    }
+  const handleFailed = (failed) => 
+    failed.reduce((acc, {id, attempts, timestamp, ...event}) => {
+      if (Date.now() > timestamp + timeout) {
+        onError({...event, id, timestamp, error: 'timeout'}, store)
+        return acc
+      } else if (attempts <= retries) {
+        return [...acc, createRetry({id})]
+      }
+    }, [])
+
+  const requestLock = (pending) => store(pending.map(createLock))
+  const processLocked = (locked) => locked.forEach(performWork)
+  const retryFailed = (failed) => store(handleFailed(failed))
+
+  const processable = ({processorId}) => !processorId || processorId === processId
+
+  const changed = (prev, current) => 
+    keys(current).reduce((acc, id) => !prev[id] && processable(current[id]) ? [...acc, current[id]] : acc, [])
+
+  const setToWork = (handlers) => ({prevProjection: prev, projection: current}) => {
+    if (!prev || !current) return 
+    keys(handlers).forEach((key) => handlers[key](changed(prev[key], current[key])))
   }
 
-  const filtered = (queue) => values(queue).filter(Boolean)
+  const handlers = {
+    pending: requestLock,
+    locked: processLocked,
+    failed: retryFailed
+  }
 
-  const processable = (queue) => 
-    filtered(queue).filter(({id, processorId}) => (processId === processorId && !processing[id]))
-
-  watch(namespace, ({
-    pending = {},
-    locked = {},
-    failed = {}
-  }) => new Promise((resolve) => {
-    processable(locked).forEach(processLocked)
-    filtered(failed).forEach(retryFailed)
-
-    const [firstPending] = filtered(pending)
-    firstPending && requestLock(firstPending)
-
-    resolve({keepWatching: true})
-  }))
+  onProjectionChange(namespace, setToWork(handlers))
 }

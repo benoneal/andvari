@@ -9,7 +9,12 @@ import serialize from './serialize'
 const {keys, freeze} = Object
 const {isArray} = Array
 
-export default ({eventStorePath, projectionsPath, projectors, version}) => {
+const workerProjections = (workers = {}) => workers.reduce((acc, {namespace}) => ({
+  ...acc,
+  [namespace]: createWorkerLens(namespace)
+}), {})
+
+export default ({eventStorePath, projectionsPath, projectors, workers, version}) => {
   if (!eventStorePath || !projectionsPath || !projectors) {
     throw new Error('Andvari requires eventStorePath, projectionsPath, and projectors map')
   }
@@ -25,17 +30,14 @@ export default ({eventStorePath, projectionsPath, projectors, version}) => {
     when,
     project,
     getProjection,
-    addProjector,
     getSeeded,
     setSeeded
-  } = initProjections(projectionsPath, {...projectors, deferred: deferredLens}, getEvents, version)
+  } = initProjections(projectionsPath, {...projectors, deferred: deferredLens, ...workerProjections(workers)}, getEvents, version)
 
   const store = (actions) => {
     actions = isArray(actions) ? actions : [actions]
     return append(actions.map(createEvent))
   }
-
-  const log = (n) => (d) => console.log(n, d) || d
 
   const seed = (actions) =>
     getSeeded()
@@ -52,43 +54,6 @@ export default ({eventStorePath, projectionsPath, projectors, version}) => {
     append(events).catch(reject)
   })
 
-  const createWorker = ({
-    namespace,
-    event,
-    condition = () => true,
-    perform,
-    onSuccess,
-    onError,
-    retries,
-    timeout
-  }) => {
-    if (!namespace || !event || typeof perform !== 'function' || typeof onSuccess !== 'function' || typeof onError !== 'function') {
-      throw new Error('createWorker requires namespace, event, perform, onSuccess, and onError')
-    }
-    addProjector(namespace, createWorkerLens(namespace))
-    initWorker({
-      namespace,
-      perform,
-      onSuccess,
-      onError,
-      retries,
-      timeout,
-      store,
-      watch,
-      getProjection
-    })
-    listen((events) => {
-      const queue = events.reduce((acc, {type, payload}) => (
-        type === event && condition(payload) ? [...acc, {
-          type: `${namespace}:queue`, 
-          payload: {...payload, id: payload.id || uuid()}
-        }] : acc
-      ), [])
-
-      queue.length && store(queue)
-    })
-  }
-
   const onProjectionChange = (namespace, handleChange) => {
     watch(namespace, (projection, _, prevProjection) => new Promise((resolve) => {
       handleChange({prevProjection, projection}, getProjection, store)
@@ -102,6 +67,46 @@ export default ({eventStorePath, projectionsPath, projectors, version}) => {
     getProjection
   })
 
+  const createWorker = ({
+    namespace,
+    event,
+    condition = () => true,
+    perform,
+    onSuccess,
+    onError,
+    retries,
+    timeout
+  }) => {
+    if (!namespace || !event || typeof perform !== 'function' || typeof onSuccess !== 'function' || typeof onError !== 'function') {
+      throw new Error('createWorker requires namespace, event, perform, onSuccess, and onError')
+    }
+
+    initWorker({
+      namespace,
+      perform,
+      onSuccess,
+      onError,
+      retries,
+      timeout,
+      store,
+      onProjectionChange,
+      getProjection
+    })
+    
+    listen((events) => {
+      const queue = events.reduce((acc, {type, payload}) => (
+        type === event && condition(payload) ? [...acc, {
+          type: `${namespace}:queue`, 
+          payload: {...payload, id: payload.id || uuid()}
+        }] : acc
+      ), [])
+
+      queue.length && store(queue)
+    })
+  }
+
+  if (isArray(workers)) workers.forEach(createWorker)
+
   listen(project)
 
   return freeze({
@@ -110,7 +115,6 @@ export default ({eventStorePath, projectionsPath, projectors, version}) => {
     storeAndProject,
     getProjection,
     onProjectionChange,
-    createWorker,
     storeDeferred
   })
 }

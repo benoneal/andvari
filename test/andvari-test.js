@@ -6,6 +6,32 @@ import path from 'path'
 import createDB from '../src'
 import serialize from '../src/serialize'
 
+const createTestEvent = (value) => ({type: 'test_event', payload: {value}})
+const createSpeedEvent = (value) => ({type: 'speed_event', payload: {value}})
+const createWorkerEvent = (value) => ({type: 'worker_event', payload: {value}})
+
+const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+const assertEqualTo = (b) => (a) => assert(equal(a, b))
+const unique = (arr) => [...(new Set(arr))]
+
+const testVals = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+const sum = (a, b) => a + b
+
+let workerSideEffect = 0
+const workerIdempotency = []
+const testWorker = {
+  namespace: 'test_worker',
+  event: 'test_event',
+  perform: ({value, id}, getProjection) =>
+    getProjection('TEST2')
+      .then((test2) => { 
+        workerSideEffect += (test2 + value)
+        workerIdempotency.push(id)
+      }),
+  onSuccess: ({value}, store) => store(createWorkerEvent(value)),
+  onError: (error) => console.log(error)
+}
+
 const dbOptions = {
   eventStorePath: 'test/data/eventStore',
   projectionsPath: 'test/data/projections',
@@ -15,8 +41,10 @@ const dbOptions = {
     TEST2: (projection = 0, {type, payload: {value}}) => 
       type === 'test_event' ? projection + value : projection,
     SPEED_TEST: (projection = 0, {type, payload: {value}}) => 
-      type === 'speed_event' ? projection + value : projection
-  }
+      type === 'speed_event' ? projection + value : projection,
+    WORKER: (projection = 0, {type, payload: {value}}) => type === 'worker_event' ? projection + value : projection
+  },
+  workers: [testWorker]
 }
 
 const {
@@ -30,14 +58,6 @@ const {
 
 const storeToTest = storeAndProject('TEST')
 const storeToTest2 = storeAndProject('TEST2')
-const createTestEvent = (value) => ({type: 'test_event', payload: {value}})
-const createSpeedEvent = (value) => ({type: 'speed_event', payload: {value}})
-
-const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b)
-const assertEqualTo = (b) => (a) => assert(equal(a, b))
-
-const testVals = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-const sum = (a, b) => a + b
 
 describe('Andvari', () => {
   it('seeds events and will not reseed them', () => 
@@ -132,6 +152,17 @@ describe('Andvari', () => {
       })
   })
 
+  it('runs workers in parallel', () => {
+    return getProjection('WORKER').then((worker) => {
+      assert(worker === 573)
+      assert(workerSideEffect === 5196)
+    })
+  })
+
+  it('only performs work once', () => {
+    assertEqualTo(unique(workerIdempotency))(workerIdempotency)
+  })
+
   it('passes a sequential full-cycle speed test', () => {
     let test = true
     wait(1000)().then(() => test = false)
@@ -141,7 +172,8 @@ describe('Andvari', () => {
         .then(runSpeedTest)
 
     return runSpeedTest().then((iterations) => {
-      assert(iterations > 12000)
+      console.log(iterations)
+      assert(iterations > 13000)
     })
   })
 })

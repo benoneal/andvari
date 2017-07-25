@@ -1,8 +1,13 @@
-const inProgressOrDone = ({locked, succeeded}, id) => (
-  (locked && locked[id]) || (succeeded && succeeded[id])
-)
+const inProgressOrDone = ({locked = {}, succeeded = {}}, id) => 
+  Boolean(locked[id] || succeeded[id])
 
-const queue = (projection, {id, ...payload}) =>
+const {keys} = Object
+
+const omit = (obj = {}, key) => keys(obj).reduce((acc, k) => (
+  (k === key) ? acc : {...acc, [k]: obj[k]}
+), {})
+
+const queue = (projection, {id, ...payload}) => 
   inProgressOrDone(projection, id) ? projection : ({
     ...projection,
     pending: {
@@ -13,10 +18,7 @@ const queue = (projection, {id, ...payload}) =>
         attempts: 1
       }
     },
-    failed: {
-      ...projection.failed,
-      [id]: undefined
-    }
+    failed: omit(projection.failed, id)
   })
 
 const lock = (projection, {id, processorId}) =>
@@ -29,10 +31,7 @@ const lock = (projection, {id, processorId}) =>
         processorId
       }
     },
-    pending: {
-      ...projection.pending,
-      [id]: undefined
-    }
+    pending: omit(projection.pending, id)
   })
 
 const success = (projection, {id}) =>
@@ -40,15 +39,9 @@ const success = (projection, {id}) =>
     ...projection,
     succeeded: {
       ...projection.succeeded,
-      [id]: {
-        ...projection.locked[id],
-        processorId: undefined
-      }
+      [id]: omit(projection.locked[id], 'processorId')
     },
-    locked: {
-      ...projection.locked,
-      [id]: undefined
-    }
+    locked: omit(projection.locked, id)
   })
 
 const failure = (projection, {id, error}) =>
@@ -57,15 +50,11 @@ const failure = (projection, {id, error}) =>
     failed: {
       ...projection.failed,
       [id]: {
-        ...projection.locked[id],
-        error,
-        processorId: undefined
+        ...omit(projection.locked[id], 'processorId'),
+        error
       }
     },
-    locked: {
-      ...projection.locked,
-      [id]: undefined
-    }
+    locked: omit(projection.locked, id)
   })
 
 const retry = (projection, {id, ...payload}) =>
@@ -78,11 +67,15 @@ const retry = (projection, {id, ...payload}) =>
         attempts: projection.failed[id].attempts + 1
       }
     },
-    failed: {
-      ...projection.failed,
-      [id]: undefined
-    }
+    failed: omit(projection.failed, id)
   })
+
+const initialProjection = {
+  pending: {},
+  locked: {},
+  failed: {},
+  succeeded: {}
+}
 
 export default (namespace) => {
   const lens = {
@@ -92,6 +85,6 @@ export default (namespace) => {
     [`${namespace}:failure`]: failure,
     [`${namespace}:retry`]: retry
   }
-  return (projection = {}, {type, payload}) =>
+  return (projection = initialProjection, {type, payload}) =>
     lens.hasOwnProperty(type) ? lens[type](projection, payload) : projection
 }
