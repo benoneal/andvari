@@ -50,7 +50,7 @@ export default ({
 
   const processable = ({processorId}) => !processorId || processorId === processId
 
-  const changed = (prev, current) => 
+  const changed = (prev = {}, current = {}) => 
     keys(current).reduce((acc, id) => !prev[id] && processable(current[id]) ? [...acc, current[id]] : acc, [])
 
   const setToWork = (handlers) => ({prevProjection: prev, projection: current}) => {
