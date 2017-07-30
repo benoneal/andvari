@@ -9,6 +9,11 @@ import serialize from './serialize'
 const {keys, freeze} = Object
 const {isArray} = Array
 
+const arrayOfActions = (actions) => {
+  actions = isArray(actions) ? actions : [actions]
+  return actions.filter(({type, payload} = {}) => Boolean(type && payload))
+}
+
 const workerProjections = (workers = []) => workers.reduce((acc, {namespace}) => ({
   ...acc,
   [namespace]: createWorkerLens(namespace)
@@ -36,22 +41,19 @@ export default ({eventStorePath, projectionsPath, projectors, workers, version})
     close: closeProjections
   } = initProjections(projectionsPath, {...projectors, deferred: deferredLens, ...workerProjections(workers)}, getEvents, version)
 
-  const store = (actions) => {
-    actions = isArray(actions) ? actions : [actions]
-    return append(actions.map(createEvent))
-  }
+  const store = (actions) => 
+    append(arrayOfActions(actions).map(createEvent))
 
   const seed = (actions) =>
     getSeeded()
-      .then((seeded) => actions.filter((action) => !seeded.includes(serialize(action))))
+      .then((seeded) => arrayOfActions(actions).filter((action) => !seeded.includes(serialize(action))))
       .then((actions) => {
         append(actions.map(createEvent))
         return setSeeded(actions.map(serialize))
       })
 
   const storeAndProject = (projectionNamespace, condition) => (actions) => new Promise((resolve, reject) => {
-    actions = isArray(actions) ? actions : [actions]
-    const events = actions.map(createEvent)
+    const events = arrayOfActions(actions).map(createEvent)
     when(projectionNamespace, events[events.length - 1].timestamp, condition).then(resolve).catch(reject)
     append(events).catch(reject)
   })

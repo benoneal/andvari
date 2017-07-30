@@ -30,7 +30,9 @@ export default ({
       })
       .catch((error) => {
         store(createError({id, error}))
-        onError({id, ...locked, error}, store)
+        if (attempts > retries){
+          onError({id, ...locked, error}, store)
+        }
       })
   }
 

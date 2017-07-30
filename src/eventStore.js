@@ -16,7 +16,7 @@ export default (path) => {
     )
   )
 
-  const createEvent = ({type, payload}) => {
+  const createEvent = ({type, payload} = {}) => {
     if (!type || !payload) throw new Error('Invalid Action provided. Must conform to shape: {type, payload}')
     return {
       type,
