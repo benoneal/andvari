@@ -59,6 +59,7 @@ export default (path) => {
     createEvent,
     append,
     getEvents,
-    listen
+    listen,
+    close: () => new Promise((resolve) => eventStore.close(resolve))
   })
 }

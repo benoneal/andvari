@@ -169,6 +169,7 @@ export default (path, initialProjectors, getEvents, REVISION = '1') => {
     project: buffer(project),
     getProjection: buffer(getProjection),
     getSeeded: buffer(getSeeded),
-    setSeeded: buffer(setSeeded)
+    setSeeded: buffer(setSeeded),
+    close: () => new Promise((resolve) => snapshots.close(resolve))
   })
 }

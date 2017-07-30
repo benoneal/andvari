@@ -1,7 +1,5 @@
-import {describe, it} from 'mocha'
+import {describe, it, after} from 'mocha'
 import assert from 'assert'
-import fs from 'fs'
-import path from 'path'
 
 import createDB from '../src'
 import serialize from '../src/serialize'
@@ -47,47 +45,41 @@ const dbOptions = {
   workers: [testWorker]
 }
 
-const {
-  seed,
-  store,
-  storeAndProject,
-  getProjection,
-  onProjectionChange,
-  storeDeferred
-} = createDB(dbOptions)
-
-const storeToTest = storeAndProject('TEST')
-const storeToTest2 = storeAndProject('TEST2')
+let db = {}
 
 describe('Andvari', () => {
+  before(() => db = createDB(dbOptions))
+
+  after(() => db.close())
+
   it('seeds events and will not reseed them', () => 
-    seed([1, 2, 3].map(createTestEvent))
+    db.seed([1, 2, 3].map(createTestEvent))
       .then(assertEqualTo([1, 2, 3].map(createTestEvent).map(serialize)))
-      .then(() => seed([2, 3, 4].map(createTestEvent)))
+      .then(() => db.seed([2, 3, 4].map(createTestEvent)))
       .then(assertEqualTo([4].map(createTestEvent).map(serialize)))
-      .then(() => seed([3, 4, 5].map(createTestEvent)))
+      .then(() => db.seed([3, 4, 5].map(createTestEvent)))
       .then(assertEqualTo([5].map(createTestEvent).map(serialize)))
   )
 
   it('stores events and projects them', () =>
-    storeToTest([6, 7, 8, 9, 10].map(createTestEvent))
+    db.storeAndProject('TEST')([6, 7, 8, 9, 10].map(createTestEvent))
       .then(assertEqualTo(testVals))
   )
 
   it('gets projections by namespace', () =>
-    getProjection('TEST')
+    db.getProjection('TEST')
       .then(assertEqualTo(testVals))
   )
 
   it('projects into all projectors', () => 
-    getProjection('TEST2')
+    db.getProjection('TEST2')
       .then(assertEqualTo(testVals.reduce(sum, 0)))
   )
 
   it('handles rapid events correctly', () => 
     Promise.all([
-      storeToTest([11, 12, 13].map(createTestEvent)),
-      storeToTest2([14, 15, 16].map(createTestEvent))
+      db.storeAndProject('TEST')([11, 12, 13].map(createTestEvent)),
+      db.storeAndProject('TEST2')([14, 15, 16].map(createTestEvent))
     ]).then(([test, test2]) => {
       const expected = testVals.concat([11, 12, 13])
       const expected2 = testVals.concat([11, 12, 13, 14, 15, 16])
@@ -103,23 +95,25 @@ describe('Andvari', () => {
       projection.forEach((n) => 
         !prevProjection.includes(n) && result.push(n))
     }
-    onProjectionChange('TEST', diff)
-    return storeToTest(createTestEvent(17))
-      .then(() => storeToTest(createTestEvent(18)))
-      .then(() => storeToTest(createTestEvent(19)))
-      .then(() => storeToTest(createTestEvent(20)))
+    db.onProjectionChange('TEST', diff)
+    return db.storeAndProject('TEST')(createTestEvent(17))
+      .then(() => db.storeAndProject('TEST')(createTestEvent(18)))
+      .then(() => db.storeAndProject('TEST')(createTestEvent(19)))
+      .then(() => db.storeAndProject('TEST')(createTestEvent(20)))
       .then(() => {
         assertEqualTo(expected)(result)
       })
   })
 
   it('defers and repeats events', () => {
-    storeDeferred(createTestEvent(99), 30, 3)
-    storeDeferred(createTestEvent(21), 30)
-    storeDeferred(createTestEvent(22), 60)
-    storeDeferred(createTestEvent(23), 90)
+    db.storeDeferred(createTestEvent(99), 30, 3)
+    db.storeDeferred(createTestEvent(21), 30)
+    db.storeDeferred(createTestEvent(22), 60)
+    db.storeDeferred(createTestEvent(23), 90)
+    db.storeDeferred(createTestEvent(24), 1500) // for restart test
+    db.storeDeferred(createTestEvent(25), 1500) // for restart test
 
-    return getProjection('TEST')
+    return db.getProjection('TEST')
       .then((test) => {
         assert(test.filter(n => n === 99).length === 0)
         assert(!test.includes(21))
@@ -127,7 +121,7 @@ describe('Andvari', () => {
         assert(!test.includes(23))
       })
       .then(wait(35))
-      .then(() => getProjection('TEST'))
+      .then(() => db.getProjection('TEST'))
       .then((test) => {
         assert(test.filter(n => n === 99).length === 1)
         assert(test.includes(21))
@@ -135,7 +129,7 @@ describe('Andvari', () => {
         assert(!test.includes(23))
       })
       .then(wait(30))
-      .then(() => getProjection('TEST'))
+      .then(() => db.getProjection('TEST'))
       .then((test) => {
         assert(test.filter(n => n === 99).length === 2)
         assert(test.includes(21))
@@ -143,7 +137,7 @@ describe('Andvari', () => {
         assert(!test.includes(23))
       })
       .then(wait(30))
-      .then(() => getProjection('TEST'))
+      .then(() => db.getProjection('TEST'))
       .then((test) => {
         assert(test.filter(n => n === 99).length === 3)
         assert(test.includes(21))
@@ -153,7 +147,9 @@ describe('Andvari', () => {
   })
 
   it('runs workers in parallel', () => {
-    return getProjection('WORKER').then((worker) => {
+    return db.getProjection('WORKER').then((worker) => {
+      console.log('worker', worker)
+      console.log('workerSideEffect', workerSideEffect)
       assert(worker === 573)
       assert(workerSideEffect === 5196)
     })
@@ -168,7 +164,7 @@ describe('Andvari', () => {
     wait(1000)().then(() => test = false)
 
     const runSpeedTest = (iterations) => !test ? iterations : 
-      storeAndProject('SPEED_TEST')(createSpeedEvent(1))
+      db.storeAndProject('SPEED_TEST')(createSpeedEvent(1))
         .then(runSpeedTest)
 
     return runSpeedTest().then((iterations) => {

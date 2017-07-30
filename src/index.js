@@ -3,13 +3,13 @@ import initEventStore from './eventStore'
 import initProjections from './projector'
 import initWorker from './worker'
 import createWorkerLens from './workerLens'
-import deferred, {deferredLens} from './deferred'
+import deferred, {clearDeferred, deferredLens} from './deferred'
 import serialize from './serialize'
 
 const {keys, freeze} = Object
 const {isArray} = Array
 
-const workerProjections = (workers = {}) => workers.reduce((acc, {namespace}) => ({
+const workerProjections = (workers = []) => workers.reduce((acc, {namespace}) => ({
   ...acc,
   [namespace]: createWorkerLens(namespace)
 }), {})
@@ -23,7 +23,8 @@ export default ({eventStorePath, projectionsPath, projectors, workers, version})
     createEvent,
     listen,
     append,
-    getEvents
+    getEvents,
+    close: closeEventStore
   } = initEventStore(eventStorePath)
   const {
     watch,
@@ -31,7 +32,8 @@ export default ({eventStorePath, projectionsPath, projectors, workers, version})
     project,
     getProjection,
     getSeeded,
-    setSeeded
+    setSeeded,
+    close: closeProjections
   } = initProjections(projectionsPath, {...projectors, deferred: deferredLens, ...workerProjections(workers)}, getEvents, version)
 
   const store = (actions) => {
@@ -109,12 +111,19 @@ export default ({eventStorePath, projectionsPath, projectors, workers, version})
 
   listen(project)
 
+  const close = () => {
+    clearDeferred()
+    closeEventStore()
+    closeProjections()
+  }
+
   return freeze({
     seed,
     store,
     storeAndProject,
     getProjection,
     onProjectionChange,
-    storeDeferred
+    storeDeferred,
+    close
   })
 }

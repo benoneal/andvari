@@ -1,3 +1,5 @@
+export const DEFERRED = 'deferred'
+
 const queue = (projection, {id, ...payload}) => ({
   ...projection,
   [id]: {
@@ -23,9 +25,9 @@ const repeat = (projection, {id, deferUntil}) => ({
 })
 
 const lens = {
-  [`deferred:queue`]: queue,
-  [`deferred:done`]: done,
-  [`deferred:repeat`]: repeat
+  [`${DEFERRED}:queue`]: queue,
+  [`${DEFERRED}:done`]: done,
+  [`${DEFERRED}:repeat`]: repeat
 }
 
 export default (projection = {}, {type, payload}) =>

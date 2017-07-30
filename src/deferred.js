@@ -1,9 +1,9 @@
 import uuid from 'uuid/v4'
-export {default as deferredLens} from './deferredLens'
+import lens, {DEFERRED} from './deferredLens'
+export const deferredLens = lens
 
-const {values} = Object
+const {values, keys} = Object
 const {isArray} = Array
-const DEFERRED = 'deferred'
 
 const deferAction = (delay, repeat) => (action) => ({
   type: `${DEFERRED}:queue`, 
@@ -30,14 +30,13 @@ const pending = {}
 
 const processLater = (handleDeferred) => ({id, deferUntil, ...action}) => {
   if (!id || pending[id]) return
-  setTimeout(() => {
+  pending[id] = setTimeout(() => {
     handleDeferred({id, ...action})
-    pending[id] = false
+    pending[id] = undefined
   }, deferUntil - Date.now())
-  pending[id] = true
 }
 
-const processQueue = (handleDeferred) => (deferred = {}) =>
+const processQueue = (handleDeferred) => (deferred = {}) => 
   values(deferred).forEach(processLater(handleDeferred))
 
 const unwrap = (store) => ({
@@ -59,6 +58,11 @@ const processNew = ({prevProjection, projection}, _, store) => {
     .reduce((acc, deferred) => ({...acc, [deferred.id]: deferred}), {})
   processQueue(unwrap(store))(diff)
 }
+
+export const clearDeferred = () => keys(pending).forEach((id) => {
+  clearTimeout(pending[id])
+  pending[id] = undefined
+})
 
 export default ({
   store,
