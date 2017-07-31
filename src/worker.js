@@ -66,15 +66,16 @@ export default ({
 
   const stale = (prev = {}, current = {}) => 
     keys(current).reduce((acc, id) =>
-      !!prev[id] && Date.now() > current[id].timestamp + (timeout / max(retries, 1))
+      !!prev[id] && Date.now() > (current[id].timestamp + timeout)
         ? [...acc, current[id]]
         : acc
     , [])
 
   const setToWork = (handlers) => ({prevProjection: prev, projection: current}) => {
     if (!prev || !current) return 
-    handleStaleLocks(stale(prev.locked, current.locked))
     keys(handlers).forEach((key) => handlers[key](changed(prev[key], current[key])))
+
+    handleStaleLocks(stale(prev.locked, current.locked))
   }
 
   const handlers = {
