@@ -112,13 +112,13 @@ export default (path, initialProjectors, getEvents, REVISION = '1') => {
       })
 
   const getDaysEvents = () => new Promise((resolve) => { 
-    snapshots.get('__nightlyTimestamp__', (err, timestamp) => {
+    snapshots.get(`__nightlyTimestamp__:${REVISION}`, (err, timestamp) => {
       getEvents(since(timestamp)).then(resolve)
     })
   })
 
   const updateLastNightly = (events) => new Promise((resolve) => {
-    snapshots.put('__nightlyTimestamp__', events[events.length - 1].timestamp, () => 
+    snapshots.put(`__nightlyTimestamp__:${REVISION}`, events[events.length - 1].timestamp, () => 
       resolve(events))
   })
 
