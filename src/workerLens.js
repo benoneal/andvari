@@ -70,6 +70,16 @@ const retry = (projection, {id, ...payload}) =>
     failed: omit(projection.failed, id)
   })
 
+const unlock = (projection, {id, ...payload}) =>
+  !projection.locked[id] ? projection : ({
+    ...projection,
+    pending: {
+      ...projection.pending,
+      [id]: omit(projection.locked[id], 'processorId')
+    },
+    locked: omit(projection.locked, id)
+  })
+
 const initialProjection = {
   pending: {},
   locked: {},
@@ -83,7 +93,8 @@ export default (namespace) => {
     [`${namespace}:lock`]: lock,
     [`${namespace}:success`]: success,
     [`${namespace}:failure`]: failure,
-    [`${namespace}:retry`]: retry
+    [`${namespace}:retry`]: retry,
+    [`${namespace}:unlock`]: unlock
   }
   return (projection = initialProjection, {type, payload}) =>
     lens.hasOwnProperty(type) ? lens[type](projection, payload) : projection

@@ -1,6 +1,7 @@
 import uuid from 'uuid/v4'
 
 const {keys, values} = Object
+const {max} = Math
 
 export default ({
   namespace,
@@ -21,6 +22,7 @@ export default ({
   const createSuccess = ({id}) => ({type: `${namespace}:success`, payload: {id}})
   const createError = ({id, error}) => ({type: `${namespace}:failure`, payload: {id, error}})
   const createLock = ({id}) => ({type: `${namespace}:lock`, payload: {id, processorId: processId}})
+  const unlockStale = ({id}) => ({type: `${namespace}:unlock`, payload: {id}})
 
   const performWork = ({id, processorId, attempts, ...locked}) => {
     perform({id, ...locked}, getProjection)
@@ -46,6 +48,9 @@ export default ({
       }
     }, [])
 
+  const handleStaleLocks = (stale = []) => 
+    store(stale.map(unlockStale))
+
   const requestLock = (pending) => store(pending.map(createLock))
   const processLocked = (locked) => locked.forEach(performWork)
   const retryFailed = (failed) => store(handleFailed(failed))
@@ -53,10 +58,22 @@ export default ({
   const processable = ({processorId}) => !processorId || processorId === processId
 
   const changed = (prev = {}, current = {}) => 
-    keys(current).reduce((acc, id) => !prev[id] && processable(current[id]) ? [...acc, current[id]] : acc, [])
+    keys(current).reduce((acc, id) => 
+      !prev[id] && processable(current[id]) 
+        ? [...acc, current[id]] 
+        : acc
+    , [])
+
+  const stale = (prev = {}, current = {}) => 
+    keys(current).reduce((acc, id) =>
+      !!prev[id] && Date.now() > current[id].timestamp + (timeout / max(retries, 1))
+        ? [...acc, current[id]]
+        : acc
+    , [])
 
   const setToWork = (handlers) => ({prevProjection: prev, projection: current}) => {
     if (!prev || !current) return 
+    handleStaleLocks(stale(prev.locked, current.locked))
     keys(handlers).forEach((key) => handlers[key](changed(prev[key], current[key])))
   }
 
