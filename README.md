@@ -16,11 +16,13 @@ It achieves this by applying an opinionated philosophy to the event sourcing pat
 
 As a result, Andvari has some really powerful advantages over other event sourcing implementations: 
 
-- Side effects (email, payment processing, shipping, etc) are a non-issue. Andvari even exposes a convience `createWorker` method to abstract away the repetitive management of these things, allowing you to write business logic with confidence that it will never execute twice and will retry as many times as you need. 
+- Side effects (email, payment processing, shipping, etc) are a non-issue. Andvari even exposes a convient `worker` API to abstract away the repetitive management of these things, allowing you to write business logic with confidence that it will never execute twice and will retry as many times as you need. 
 - You can completely restructure your projections based on evolving data access requirements as simply as refactoring your reducer functions. When you update the version supplied to Andvari, your next deploy will reproject the entire history of events with your new projection logic (and you don't lose the old projections either).
 - All the hard work is done for you. In building a production app, you merely need to define projection reducers that can process the events you store. Andvari wraps up all the eventual consistency concerns with a convenient promise-based API. `storeAndProject` allows you to store an event then have the promise resolve with the projection you want when it is updated with that event. 
+- Everything is promise-based to take advantage of node's excellent handling of async and I/O
+- All projections are held in-memory so read performance is limited only by the host machine specs
 
-However, it's worth noting that Andvari is not currently suitable if your requirements demand distributed processing / lateral scaling. It is single-process and single source-of-truth, but it's also fast and built on levelDB. 
+However, it's worth noting that Andvari is not currently suitable if your requirements demand distributed processing / lateral scaling. It is single-process and single source-of-truth, but it's also fast and built on levelDB. If you need these, or your use-case demands truly volumes of data, I *highly recommend* a solution like [Apache Samza](http://samza.apache.org/). 
 
 ## How to use
 
@@ -81,33 +83,16 @@ const projectors = {
 }
 ```
 
-#### createWorker
+#### Workers
 Andvari exposes a useful worker abstraction. Workers will respond to a specified event, performing whatever action you want to perform in a separate event/projection loop (soon to be one or more separate threads). The worker handles idempotency to ensure that you will never ever process the same event twice, no matter how often your projections are re-run, or how many times you need to retry failed actions (or how many threads are running). 
 
-Workers are useful for managing side effects and integrations with external services, such as sending emails and processing payments. Just focus on writing business logic and let a worker manage the repetitive implementation details. 
+They operate on a simple principle: when a given event type is stored, pass the event to a provided `perform` promise, which will do whatever you make it do. When this succeeds, it will call the provided onSuccess callback, or onError if your promise rejects, it runs out of retries, or takes longer than your supplied timeout. 
 
-## Snapshots
+Workers are useful for managing side effects and integrations with external services, such as sending emails and processing payments. Just focus on writing business logic and let a worker manage the repetitive implementation details.
 
-Andvari uses two snapshots for all projections: `latest` and `nightly`. It will prefer `latest`, and fall back to `nightly` if latest doesn't exist. `Nightly` will update at midnight server-time every night, building on the previous `nightly` snapshot. Due to the eventually consistent nature of event sourcing, every projection snapshot attempt will fetch and project from all events since it was snapshoted, even though the trigger to do so occurs on every event. 
-
-All projection snapshots are versioned with whatever `version` string you have provided in the dbOptions hash. If the string changes, subsequent projections will re-project the entire history of events. Thus when you update the `version` when you change your business logic, the entire projected state will reflect the whole history. If you don't update the `version`, only future events will have the new data shape in your projections. 
-
-## API
-createDB returns the following interface: 
+Workers are created by providing a `workers` array of `workerConfigs` to `createDB`: 
 
 ```js
-seed <HashedActionID> (<Action: []: object>)
-store <NanosecondTimestamp> (<Action []: object>)
-storeAndProject <Projection> (<ProjectionNamespace: string>, <Condition: function>)(<Action []: object>)
-getProjection <Projection> (<ProjectionNamespace: string>)
-watch <Projection> (<ProjectionNamespace: string>, <Callback: function>)
-createWorker <> (<WorkerConfig>)
-
-<Action>: {
-  type: string,
-  payload: any
-}
-
 <WorkerConfig>: {
   namespace: string,
   event: string,
@@ -120,10 +105,43 @@ createWorker <> (<WorkerConfig>)
 }
 ```
 
-You can use all the redux patterns you may be used to for creating your actions and projection reducers. Actions must conform to the spec above, but reducers can return a projection of any type/shape you require. Your reducers can handle as many/few action types as they need: all events are passed through all provided `projector` reducers. 
+## Snapshots
+
+Andvari snapshots all projections. At midnight server-time every night, current projections are saved as nightly snapshots. On redeploy / reboot, every projection will bootstrap itself from the nightly snapshots, and update with all events since the snapshot. 
+
+All projection snapshots are versioned with whatever `version` string you have provided in the dbOptions hash. If the string changes, subsequent projections will re-project the entire history of events. Thus when you update the `version` when you change your business logic, the entire projected state will reflect the whole history. If you don't update the `version`, only future events will have the new data shape in your projections. Old snapshots are never deleted, but there is currently no API exposed to retrieve them.
+
+## API
+createDB returns the following methods: 
+
+```js
+seed <HashedActionID> (<Action: []: object>)
+store <NanosecondTimestamp> (<Action []: object>)
+storeDeferred <NanosecondTimestamp> (<Action []: object>, delay, repeat)
+storeAndProject <Projection> (<ProjectionNamespace: string>, <Condition: function>)(<Action []: object>)
+getProjection <Projection> (<ProjectionNamespace: string>)
+onProjectionChange (<ProjectionNamespace: string>, <Callback: function>)
+
+// Actions provided to Andvari *must* conform to this spec.
+<Action>: {
+  type: string,
+  payload: any
+}
+```
+
+You can use whatever redux-like patterns you may be used to for creating your actions and projection reducers: they are just data and functions. Actions must conform to the spec above, but reducers can return a projection of any type/shape you require. Your reducers can handle as many/few action types as they need: all events are passed through all provided `projector` reducers. 
+
+#### Seeding data
+
+`seed` actions in your code, and they will only ever be evented once, no matter how many times you deploy with that code in your application. Seeded actions are hashed, so don't change their contents between deploys or a new event will be added. 
+
+#### Deferring events
+
+When you have `workers` processing things such as emails or subscription payments, it can be incredibly useful to have a declarative way to defer actioning these events until some time in the future. `storeDeferred` will wrap your event, preventing it from being picked up by your workers and other projections, and uses an internal projection to unwrap the event, storing the original at the appropriate time in the future. 
+
+This event can also be repeated, though this should be done with caution, because at this point, there is no additional conditional applied that might be able to prevent a future event if, say, a customer changes their account email address, and you would need to deal with this another way (best to stick to limited repeats until the API for deferred events can account for dynamic conditionals based on current projections). 
 
 ##### Future additions
 
-- Idempotent event seeding
 - Hooks to persist/restore nightly backups to/from external source
 - TCP/HTTP client interface for standalone server
