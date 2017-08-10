@@ -126,6 +126,7 @@ export default ({eventStorePath, projectionsPath, projectors, workers, version})
     getProjection,
     onProjectionChange,
     storeDeferred,
-    close
+    close,
+    __getEventsOfTypes: (types) => getEvents('\x00', '\xff', ({type}) => types.includes(type))
   })
 }

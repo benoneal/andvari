@@ -45,10 +45,11 @@ export default (path) => {
     })
   })
 
-  const getEvents = (start = '\x00', end = '\xff') => new Promise((resolve, reject) => {
+  const defaultFilter = () => true
+  const getEvents = (start = '\x00', end = '\xff', filter = defaultFilter) => new Promise((resolve, reject) => {
     const events = []
     eventStore.createValueStream({start, end})
-      .on('data', (event) => events.push(event))
+      .on('data', (event) => filter(event) && events.push(event))
       .on('close', () => resolve(events))
       .on('error', reject)
   })
