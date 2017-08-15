@@ -14,7 +14,7 @@ It achieves this by applying an opinionated philosophy to the event sourcing pat
 - Projections are disposable, can take any shape, and can be added, removed, or changed at any time
 - All business logic reads from projections only
 
-As a result, Andvari has some really powerful advantages over other event sourcing implementations: 
+As a result, Andvari has some really powerful advantages over some other event sourcing implementations: 
 
 - Side effects (email, payment processing, shipping, etc) are a non-issue. Andvari even exposes a convient `worker` API to abstract away the repetitive management of these things, allowing you to write business logic with confidence that it will never execute twice and will retry as many times as you need. 
 - You can completely restructure your projections based on evolving data access requirements as simply as refactoring your reducer functions. When you update the version supplied to Andvari, your next deploy will reproject the entire history of events with your new projection logic (and you don't lose the old projections either).
@@ -22,7 +22,7 @@ As a result, Andvari has some really powerful advantages over other event sourci
 - Everything is promise-based to take advantage of node's excellent handling of async and I/O
 - All projections are held in-memory so read performance is limited only by the host machine specs
 
-However, it's worth noting that Andvari is not currently suitable if your requirements demand distributed processing / lateral scaling. It is single-process and single source-of-truth, but it's also fast and built on levelDB. If you need these, or your use-case demands truly volumes of data, I *highly recommend* a solution like [Apache Samza](http://samza.apache.org/). 
+However, it's worth noting that Andvari is not currently suitable if your requirements demand distributed processing / lateral scaling. It is strictly single-process and single source-of-truth, as it is built on levelDB. If you need a distributed db, or your use-case demands truly large volumes of data, I *highly recommend* a solution like [Apache Samza](http://samza.apache.org/). 
 
 ## How to use
 
@@ -40,30 +40,37 @@ const dbOptions = {
   projectors: {
     users: (projection, {type, payload: {id, name, email}}) => type !== 'CREATE_USER' ? projection : ({
       ...projection,
+      uniqueIds: uniq([...(projection.uniqueIds || []), id]),
+      count: (projection.count || 0) + 1,
       [id]: {
         name, 
         email
       }
     })
   },
-  version: 1.0.0
+  version: '1.0.0'
 }
 
 const {storeAndProject, getProjection} = createDB(dbOptions)
 
 const userActions = [
-  {type: 'CREATE_USER', payload: {id: 1, name: 'Mary'}},
-  {type: 'CREATE_USER', payload: {id: 2, name: 'David'}},
-  {type: 'CREATE_USER', payload: {id: 3, name: 'Jane'}},
+  {type: 'CREATE_USER', payload: {id: 1, name: 'Mary', email: 'mary@sue.com'}},
+  {type: 'CREATE_USER', payload: {id: 2, name: 'David', email: 'david@lynch.com'}},
+  {type: 'CREATE_USER', payload: {id: 3, name: 'Jane', email: 'jane@doe.com'}},
 ]
 
 const log = console.log.bind(console)
-userActions.forEach(action => storeAndProject('userCount')(action).then(log))
+userActions.forEach(action => storeAndProject('users')(action).then(log))
 
-/* example output ('userCount' projection):
+/* example output ('users' projection):
 {
   uniqueIds: [1,2,3],
-  count: 3
+  count: 3,
+  [1]: {
+    name: 'Mary',
+    email: 'mary@sue.com'
+  },
+  ...
 }
 */
 ```
@@ -139,9 +146,14 @@ You can use whatever redux-like patterns you may be used to for creating your ac
 
 When you have `workers` processing things such as emails or subscription payments, it can be incredibly useful to have a declarative way to defer actioning these events until some time in the future. `storeDeferred` will wrap your event, preventing it from being picked up by your workers and other projections, and uses an internal projection to unwrap the event, storing the original at the appropriate time in the future. 
 
-This event can also be repeated, though this should be done with caution, because at this point, there is no additional conditional applied that might be able to prevent a future event if, say, a customer changes their account email address, and you would need to deal with this another way (best to stick to limited repeats until the API for deferred events can account for dynamic conditionals based on current projections). 
+This event can also be repeated, though this should be done with full awareness of the implications. A deferred event will unwrap **as initially provided**. This seems obvious, but it means you should not trust/rely on deferred event data for fields that might change before it is unwrapped and/or especially repeated. For example: if you repeat an event that would trigger an email to be sent to account holders, you will need to deal with the fact that the customer may change their email address, or cancel their account, before your repeats have finished. The simplest way to manage this is to maintain a map in your projections of old->new email addresses, and check for account status before actually sending any email.
+
+This is good practice anyway, but it bears emphasis. When deferring events for future processing, especially those with side effects, **plan for all edge cases carefully**. 
 
 ##### Future additions
 
-- Hooks to persist/restore nightly backups to/from external source
+- Configure timing for backups to smaller increments than "nightly"
+- Per projector versioning
+- Hooks to persist/restore backups to/from external source
 - TCP/HTTP client interface for standalone server
+- Hook to migrate eventStore through a map (for staging environments to mirror production with sanitized data)
