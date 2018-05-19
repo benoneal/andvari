@@ -1,131 +1,146 @@
-import uuid from 'uuid/v4'
-import initEventStore from './eventStore'
-import initProjections from './projector'
-import initWorker from './worker'
-import createWorkerLens from './workerLens'
-import deferred, {clearDeferred, deferredLens} from './deferred'
+import now from 'nano-time'
+import camelCase from 'lodash/camelCase'
+import fast from 'fast.js'
+import cleanup from 'node-cleanup'
+import initEventStore, {ERROR, EVENT_STORED} from './eventStore'
+import initProjections, {PROJECTION_UPDATED} from './projector'
+import deferred, {deferredLens} from './deferred'
 import serialize from './serialize'
+import emitter from './emitter'
 
-const {keys, freeze} = Object
+export {default as is} from 'lov'
+export {default as createLens} from './lensCreator'
+export {EVENT_HISTORY, EVENT_HISTORY_COMPLETE} from './eventStore'
+
 const {isArray} = Array
+const toArray = events => isArray(events) ? events : [events]
+const rand = (n = 1, offset = 0) => Math.floor(Math.random() * n) + offset
 
-const arrayOfActions = (actions) => {
-  actions = isArray(actions) ? actions : [actions]
-  return actions.filter(({type, payload} = {}) => Boolean(type && payload))
-}
-
-const workerProjections = (workers = []) => workers.reduce((acc, {namespace}) => ({
-  ...acc,
-  [namespace]: createWorkerLens(namespace)
-}), {})
-
-export default ({eventStorePath, projectionsPath, projectors, workers, version}) => {
-  if (!eventStorePath || !projectionsPath || !projectors) {
-    throw new Error('Andvari requires eventStorePath, projectionsPath, and projectors map')
+export default ({
+  eventStorePath,
+  projectionsPath,
+  persistInterval = rand(50, 75),
+  lenses = [],
+  triggers = [],
+}) => {
+  if (!eventStorePath || !projectionsPath || !lenses.length) {
+    throw new Error('Andvari requires eventStorePath, projectionsPath, and lenses map')
   }
 
+  const listeners = new Map()
+
   const {
-    createEvent,
-    listen,
-    append,
-    getEvents,
-    close: closeEventStore
-  } = initEventStore(eventStorePath)
+    defer,
+    cancel,
+    trigger: deferredTrigger, 
+    init: initDeferred
+  } = deferred()
+
   const {
-    watch,
-    when,
+    store,
+    replayHistory,
+    open: openEventStore,
+    close: closeEventStore,
+    backup: backupEventStore
+  } = initEventStore(eventStorePath, persistInterval)
+
+  const {
+    show,
     project,
-    getProjection,
     getSeeded,
     setSeeded,
-    close: closeProjections
-  } = initProjections(projectionsPath, {...projectors, deferred: deferredLens, ...workerProjections(workers)}, getEvents, version)
+    projectionCache,
+    open: openProjections,
+    close: closeProjections,
+    backup: backupProjections
+  } = initProjections(
+    projectionsPath,
+    [...lenses, deferredLens],
+    [...triggers, deferredTrigger],
+    persistInterval
+  )
 
-  const store = (actions) => 
-    append(arrayOfActions(actions).map(createEvent))
+  initDeferred(store, show)
 
-  const seed = (actions) =>
-    getSeeded()
-      .then((seeded) => arrayOfActions(actions).filter((action) => !seeded.includes(serialize(action))))
-      .then((actions) => {
-        append(actions.map(createEvent))
-        return setSeeded(actions.map(serialize))
-      })
-
-  const storeAndProject = (projectionNamespace, condition) => (actions) => new Promise((resolve, reject) => {
-    const events = arrayOfActions(actions).map(createEvent)
-    when(projectionNamespace, events[events.length - 1].timestamp, condition).then(resolve).catch(reject)
-    append(events).catch(reject)
-  })
-
-  const onProjectionChange = (namespace, handleChange) => {
-    watch(namespace, (projection, _, prevProjection) => new Promise((resolve) => {
-      handleChange({prevProjection, projection}, getProjection, store)
-      resolve({keepWatching: true})
-    }))
+  const open = () => {
+    openEventStore()
+    openProjections()
   }
-
-  const storeDeferred = deferred({
-    store,
-    onProjectionChange,
-    getProjection
-  })
-
-  const createWorker = ({
-    namespace,
-    event,
-    condition = () => true,
-    perform,
-    onSuccess,
-    onError,
-    retries,
-    timeout
-  }) => {
-    if (!namespace || !event || typeof perform !== 'function' || typeof onSuccess !== 'function' || typeof onError !== 'function') {
-      throw new Error('createWorker requires namespace, event, perform, onSuccess, and onError')
-    }
-
-    initWorker({
-      namespace,
-      perform,
-      onSuccess,
-      onError,
-      retries,
-      timeout,
-      store,
-      onProjectionChange,
-      getProjection
-    })
-    
-    listen((events) => {
-      const queue = events.reduce((acc, {type, payload}) => (
-        type === event && condition(payload) ? [...acc, {
-          type: `${namespace}:queue`, 
-          payload: {...payload, id: payload.id || uuid()}
-        }] : acc
-      ), [])
-
-      queue.length && store(queue)
-    })
-  }
-
-  if (isArray(workers)) workers.forEach(createWorker)
-
-  listen(project)
-
-  const close = () => {
-    clearDeferred()
-    closeEventStore()
+  const close = () => Promise.all([
+    closeEventStore(),
     closeProjections()
+  ])
+  const backup = () => Promise.all([
+    backupEventStore(),
+    backupProjections()
+  ])
+
+  const seed = async toSeed => {
+    const events = toArray(toSeed)
+    if (events.length === 0) return
+    const seeded = await getSeeded()
+    let i = -1, serialized = []
+    while (++i < events.length) {
+      const hashed = serialize(events[i])
+      if (fast.indexOf(seeded, hashed) !== -1) continue
+      serialized.push(hashed)
+      store(events[i])
+    }
+    return setSeeded(serialized)
   }
 
-  return freeze({
+  const when = (name, timestamp, resolve) => {
+    listeners.set(timestamp, projection => {
+      if (projection.name !== name) return
+      if (projection.timestamp < timestamp) return
+      resolve(projection.snapshot)
+      listeners.delete(timestamp)
+    })
+  }
+
+  const helpers = fast.reduce(lenses, (acc, {name}) => ({
+    ...acc,
+    [camelCase(`store_${name}`)]: event => new Promise(resolve => {
+      const timestamp = event.timestamp
+      when(name, timestamp || now(), resolve)
+      store(event)
+    }),
+    [camelCase(`show_${name}`)]: () => Promise.resolve(show(name))
+  }), {})
+
+  emitter.on(EVENT_STORED, project)
+  emitter.on(PROJECTION_UPDATED, projection => {
+    for (const listener of listeners.keys()) {
+      listeners.has(listener) && listeners.get(listener)(projection)
+    }
+  })
+
+  const listen = type => fn => {
+    emitter.on(type, fn)
+    return () => emitter.off(type, fn)
+  }
+
+  cleanup((exitCode, signal) => {
+    if (signal) {
+      close().then(_ => process.kill(process.pid, signal))
+      cleanup.uninstall()
+      return false
+    }
+  })
+
+  return {
     seed,
     store,
-    storeAndProject,
-    getProjection,
-    onProjectionChange,
-    storeDeferred,
-    close
-  })
+    show,
+    defer,
+    cancel,
+    ...helpers,
+    open,
+    close,
+    backup,
+    replayHistory,
+    onError: listen(ERROR),
+    onEvent: listen(EVENT_STORED),
+    onProjection: listen(PROJECTION_UPDATED),
+  }
 }

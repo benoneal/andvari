@@ -1,54 +1,35 @@
 import {describe, it, before, after} from 'mocha'
 import assert from 'assert'
-import fs from 'fs'
-import path from 'path'
 
-import createDB from '../src'
+import db from './db'
+
+const wait = ms => () => new Promise(resolve => setTimeout(resolve, ms))
 
 const {values} = Object
 
-const dbOptions = {
-  eventStorePath: 'test/data/eventStore',
-  projectionsPath: 'test/data/projections',
-  projectors: {
-    TEST: (projection = [], {type, payload: {value}}) => 
-      type === 'test_event' ? [...projection, value] : projection
-  }
-}
-
-let db = {}
-
 describe('Andvari restarted', () => {
-  before(() => db = createDB(dbOptions))
-
+  before(() => db.open())
   after(() => db.close())
 
   it('recovers projections', () => 
-    db.getProjection('TEST').then((test) => {
-      assert(test.length === 27)
-    })
+    db.showTest().then(test => assert(test.length === 27))
   )
 
-  it('recovers deferred events', () => 
-    db.getProjection('deferred').then((deferred) => {
-      const [first, second] = values(deferred)
-      assert(first.delay === 1500)
-      assert(first.action.payload.value === 24)
-      assert(second.action.type === 'test_event')
-      assert(second.action.payload.value === 25)
-    })
-  )
+  it('recovers deferred events', () => {
+    const deferred = db.show('__deferred')
+    const [first, second] = values(deferred)
+    assert(first.delay === 1000)
+    assert(first.event.payload === 24)
+    assert(second.event.type === 'test_event')
+    assert(second.event.payload === 25)
+  })
 
   it('processes deferred events', () => 
-    wait(1600)()
-      .then(() => db.getProjection('TEST'))
+    wait(1100)()
+      .then(db.showTest)
       .then(test => {
         assert(test.includes(24))
         assert(test.includes(25))
       })
   )
-})
-
-const wait = (ms) => () => new Promise((resolve) => {
-  setTimeout(resolve, ms)
 })

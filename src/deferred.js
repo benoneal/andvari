@@ -1,83 +1,51 @@
-import uuid from 'uuid/v4'
-import lens, {DEFERRED} from './deferredLens'
-export const deferredLens = lens
+import now from 'nano-time'
+import fast from 'fast.js'
+import emitter from './emitter'
+import {queue, repeat, complete, DEFERRED} from './deferredLens'
+export {lens as deferredLens} from './deferredLens'
 
-const {values, keys} = Object
-const {isArray} = Array
+export default () => {
+  let _store, _show
 
-const deferAction = (delay, repeat) => (action) => ({
-  type: `${DEFERRED}:queue`, 
-  payload: {
-    id: uuid(), 
-    deferUntil: Date.now() + delay, 
-    delay, 
-    repeat, 
-    action
-  }
-})
-
-const repeatDeferred = (id, deferUntil) => ({
-  type: `${DEFERRED}:repeat`,
-  payload: {id, deferUntil}
-})
-
-const deferredDone = (id) => ({
-  type: `${DEFERRED}:done`,
-  payload: {id}
-})
-
-const pending = {}
-
-const processLater = (handleDeferred) => ({id, deferUntil, ...action}) => {
-  if (!id || pending[id]) return
-  pending[id] = setTimeout(() => {
-    handleDeferred({id, ...action})
-    pending[id] = undefined
-  }, deferUntil - Date.now())
-}
-
-const processQueue = (handleDeferred) => (deferred = {}) => 
-  values(deferred).forEach(processLater(handleDeferred))
-
-const unwrap = (store) => ({
-  id,
-  delay,
-  repeat,
-  repeats,
-  action
-}) => {
-  store(action)
-  const next = repeats < repeat ? repeatDeferred : deferredDone
-  store(next(id, Date.now() + delay))
-}
-
-const processNew = ({prevProjection, projection}, _, store) => {
-  const diff = values(projection)
-    .filter(({id, repeats}) => 
-      !prevProjection[id] || (repeats !== prevProjection[id].repeats))
-    .reduce((acc, deferred) => ({...acc, [deferred.id]: deferred}), {})
-  processQueue(unwrap(store))(diff)
-}
-
-export const clearDeferred = () => keys(pending).forEach((id) => {
-  clearTimeout(pending[id])
-  pending[id] = undefined
-})
-
-export default ({
-  store,
-  onProjectionChange,
-  getProjection
-}) => {
-  getProjection(DEFERRED).then(processQueue(unwrap(store)))
-
-  onProjectionChange(DEFERRED, processNew)
-
-  const storeDeferred = (actions, delay, repeat = false) => {
-    if (!delay) throw new Error('Cannot create a deferred event without a delay')
-    actions = isArray(actions) ? actions : [actions]
-    return store(actions.map(deferAction(delay, repeat)))
+  const defer = (event, delay, repeatCount = 0) => {
+    if (!_store || !_show) throw new Error('Deferred not initialized')
+    if (!delay) throw new Error('Cannot defer an event without a delay')
+    _store(queue({event, delay, repeatCount, id: now(), deferUntil: Date.now() + delay}))
   }
 
-  return storeDeferred
+  const timers = new Map()
+  const setTimer = (id, delay) => timers.set(id, setTimeout(() => process(id), delay))
+  const process = id => {
+    timers.delete(id)
+    const deferred = _show(DEFERRED)
+    if (!deferred[id]) return
+    const timeNow = Date.now()
+    const {deferUntil, delay, repeatCount, repeated, event} = deferred[id]
+    if (deferUntil > timeNow) return setTimer(id, deferUntil - timeNow)
+    _store({...event, timestamp: now()})
+    if (repeated < repeatCount) {
+      _store(repeat({id, deferUntil: deferUntil + delay}))
+    } else {
+      _store(complete({id}))
+    }
+  }
+
+  const handleDeferred = (prev, deferred) => {
+    if (!_store || !_show) throw new Error('Deferred not initialized')
+    if (!deferred) return
+    const timeNow = Date.now()
+    for (const id in deferred) {
+      if (timers.has(id) || (prev && prev[id]) === deferred[id]) continue
+      setTimer(id, deferred[id].deferUntil - timeNow)
+    }
+  }
+
+  const cancel = id => _store(complete({id}))
+  const trigger = {projection: DEFERRED, onUpdate: handleDeferred}
+  const init = (store, show) => {
+    _store = store
+    _show = show
+  }
+
+  return {defer, cancel, trigger, init}
 }

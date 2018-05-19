@@ -1,34 +1,41 @@
-export const DEFERRED = 'deferred'
+import createLens from './lensCreator'
 
-const queue = (projection, {id, ...payload}) => ({
-  ...projection,
-  [id]: {
-    id,
-    ...payload,
-    repeats: 0
-  }
-})
+export const DEFERRED = '__deferred'
 
-const done = (projection, {id}) => {
-  const {[id]: discard, ...withoutDone} = projection
-  return withoutDone
+const deferredLens = createLens(DEFERRED, {})
+const {createEventHandler} = deferredLens
+
+const omit = (object, key) => {
+  const {[key]: deletedKey, ...rest} = object
+  return rest
 }
 
-const repeat = (projection, {id, deferUntil}) => ({
-  ...projection,
-  [id]: {
-    ...projection[id],
-    id,
-    deferUntil,
-    repeats: projection[id].repeats + 1
-  }
-})
+export const lens = deferredLens.lens
 
-const lens = {
-  [`${DEFERRED}:queue`]: queue,
-  [`${DEFERRED}:done`]: done,
-  [`${DEFERRED}:repeat`]: repeat
-}
+export const queue = createEventHandler(
+  `${DEFERRED}:queue`, 
+  (snapshot, payload) => ({
+    ...snapshot,
+    [payload.id]: {
+      ...payload,
+      repeated: 0
+    }
+  })
+)
 
-export default (projection = {}, {type, payload}) =>
-  lens.hasOwnProperty(type) ? lens[type](projection, payload) : projection
+export const repeat = createEventHandler(
+  `${DEFERRED}:repeat`,
+  (snapshot, {id, deferUntil}) => ({
+    ...snapshot,
+    [id]: {
+      ...snapshot[id],
+      deferUntil,
+      repeated: snapshot[id].repeated + 1
+    }
+  })
+)
+
+export const complete = createEventHandler(
+  `${DEFERRED}:complete`,
+  (snapshot, {id}) => omit(snapshot, id)
+)

@@ -1,5 +1,7 @@
 # Andvari
 
+**NB: Readme currently out-of-date with the latest version (4). Will update soon.**
+
 **Event sourcing in node from redux-like actions and reducers.**
 
 Andvari has a simple goal: 

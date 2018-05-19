@@ -1,175 +1,119 @@
-import levelup from 'level'
-import now from 'nano-time'
+import level from 'level-hyper'
+import fast from 'fast.js'
+import emitter from './emitter'
 
-const {keys, values, freeze} = Object
+export const ERROR = 'ERROR'
+export const PROJECTION_UPDATED = 'PROJECTION_UPDATED'
 
-const PREVIOUS = 'PREVIOUS'
-const NIGHTLY = 'NIGHTLY'
+const handleErrors = error => 
+  emitter.emit(ERROR, {message: 'Error persisting projections', error, timestamp: Date.now()})
 
-const msTillMidnight = () => {
-  const day = new Date()
-  day.setHours(24, 0, 0, 0)
-  const nextMd = day.getTime() - Date.now()
-  return nextMd > 1000 * 60 ? nextMd : 1000 * 60 * 60 * 24
-}
-
-const runNightly = (fn) => {
-  setTimeout(fn, msTillMidnight())
-}
-
-const SAFE_INT = '000000000000000'
-const leftPad = (str = '', pad = SAFE_INT) => (pad + str).substring(str.length)
-const since = (timestamp) => {
-  if (!timestamp) return
-  const left = timestamp.slice(0, -SAFE_INT.length)
-  const right = timestamp.slice(-SAFE_INT.length, timestamp.length)
-  return left + leftPad(parseInt(right) + 1 + '')
-}
-
-const pipeReducer = (acc, fn) => typeof fn === 'function' ? fn(acc) : acc
-const pipe = (...fns) => (arg) => fns.reduce(pipeReducer, arg)
-
-export default (path, initialProjectors, getEvents, REVISION = '1') => {
-  const projectors = initialProjectors || {}
-  const projections = {}
-  const snapshots = levelup(path, {valueEncoding: 'json'})
-
-  // Handle sync updates during initialization
-  const queue = []
+export default (path, lenses, triggers = [], persistInterval) => {
+  const album = level(path, {valueEncoding: 'json'})
   let initialized = false
-  const buffer = (fn) => (...args) => new Promise((resolve) => {
-    if (initialized) return resolve(fn(...args))
-    queue.push([fn, args, resolve])
-  })
-  const flushQueue = () => queue.forEach(([fn, args, resolve]) => resolve(fn(...args)))
-
-  // Seeds
-  const getSeeded = () => new Promise((resolve) => {
-    snapshots.get('__seeded__', (err, seeded = []) => resolve(seeded))
-  })
-
-  const setSeeded = (newSeeds) => new Promise((resolve) => {
-    getSeeded().then((oldSeeds) =>
-      snapshots.put('__seeded__', [...oldSeeds, ...newSeeds], () =>  resolve(newSeeds)))
-  })
-
-  // Watchers
-  const watchers = {}
-  const cleanUpWatcher = (timestamp) => 
-    ({keepWatching} = {}) => 
-      !keepWatching && delete watchers[timestamp]
-
-  const watchersFor = (projectionNamespace) => 
-    ({namespace}) => projectionNamespace === namespace
-
-  const previousProjection = (namespace) => 
-    projections[`${namespace}:${PREVIOUS}`] && projections[`${namespace}:${PREVIOUS}`].projection
-
-  const updateWatchers = ({namespace, timestamp, projection}) => {
-    values(watchers).filter(watchersFor(namespace))
-      .forEach(({fn, watchTimestamp}) => 
-        fn(projection, timestamp, previousProjection(namespace)).then(cleanUpWatcher(watchTimestamp)))
+  const projectionCache = new Map()
+  const getCached = name => projectionCache.get(name)
+  const show = name => {
+    const cached = getCached(name)
+    return cached && cached.snapshot
   }
 
-  const watch = (namespace, fn) => {
-    const watchTimestamp = now()
-    watchers[watchTimestamp] = {fn, namespace, watchTimestamp}
-  }
-
-  const matchProjection = (timestamp, condition, cb) => (projection, ssTimestamp) =>
-    new Promise((resolve) => {
-      if (ssTimestamp >= timestamp && condition(projection)) {
-        cb(projection)
-        resolve()
-      }
-    })
-
-  const when = (namespace, eTimestamp, condition = () => true) => new Promise((resolve) => {
-    watch(namespace, matchProjection(eTimestamp, condition, resolve))
+  const retrieve = key => new Promise((resolve, reject) => {
+    album.get(key, (err, value) => 
+      (!err || err.notFound) ? resolve(value === null ? undefined : value) : reject(err))
+  })
+  const insert = projectionOperations => new Promise((resolve, reject) => {
+    album.batch(projectionOperations, err => err ? reject(err) : resolve())
   })
 
-  // Manage Nightly builds
-  const getSnapshot = (namespace) => new Promise((resolve) => {
-    snapshots.get(`${namespace}:${NIGHTLY}:${REVISION}`, (err, {timestamp, projection} = {}) =>
-      resolve({timestamp, projection, namespace}))
-  })
+  // Seeding
+  const getSeeded = () => retrieve('__seeded__').then(seeded => seeded || [])
 
-  const buildProjectionsFromSnapshots = (snapshots) => snapshots.reduce((acc, snapshot) => ({
-    ...acc,
-    [snapshot.namespace]: snapshot
-  }), {})
+  const setSeeded = newSeeds =>
+    retrieve('__seeded__').then(seeded =>
+      insert([{type: 'put', key: '__seeded__', value: fast.concat(seeded, newSeeds)}]).then(_ => newSeeds))
 
-  const restoreSnapshots = (projectors, updateWatchers = false) => 
-    Promise.all(projectors.map(getSnapshot))
-      .then(buildProjectionsFromSnapshots)
-      .then(applyProjections(updateWatchers))
-      .then(getDaysEvents)
-      .then(createProjections)
-      .then(applyProjections(updateWatchers))
-      .then(() => {
-        initialized = true
-        flushQueue()
+  // Persistence
+  const getProjection = name => {
+    let cached = getCached(name)
+    if (cached) return Promise.resolve(cached)
+    return retrieve(name)
+      .then(projection => {
+        projectionCache.set(name, projection)
+        return projection
       })
-
-  const getDaysEvents = () => new Promise((resolve) => { 
-    snapshots.get(`__nightlyTimestamp__:${REVISION}`, (err, timestamp) => {
-      getEvents(since(timestamp)).then(resolve)
-    })
-  })
-
-  const updateLastNightly = (events) => new Promise((resolve) => {
-    snapshots.put(`__nightlyTimestamp__:${REVISION}`, events[events.length - 1].timestamp, () => 
-      resolve(events))
-  })
-
-  const persistProjections = (newProjections) => 
-    snapshots.batch(values(newProjections).map((value) => ({
-      type: 'put', 
-      key: `${value.namespace}:${NIGHTLY}:${REVISION}`, 
-      value
-    })))
-
-  // Projections
-  const getProjection = (namespace) => Promise.resolve(projections[namespace] && projections[namespace].projection)
- 
-  const projectEvents = (events = [], lens, {timestamp, projection, namespace} = {}) => ({
-    namespace,
-    timestamp: events.length ? events[events.length - 1].timestamp : timestamp,
-    projection: events.reduce(lens, projection)
-  })
-
-  const createProjections = (events) => 
-    keys(projectors).reduce((acc, namespace) => ({
-      ...acc,
-      [namespace]: projectEvents(events, projectors[namespace], projections[namespace])
-    }), {})
-
-  const applyProjections = (shouldUpdateWatchers) => (newProjections = {}) => 
-    values(newProjections).forEach(({namespace, timestamp, projection} = {}) => {
-      if (!namespace || projections[namespace] && projection === projections[namespace].projection) return
-      projections[`${namespace}:${PREVIOUS}`] = projections[namespace]
-      projections[namespace] = {namespace, timestamp, projection}
-      shouldUpdateWatchers && updateWatchers(projections[namespace])
-    })
-
-  const project = pipe(createProjections, applyProjections(true))
-
-  const projectNightly = () => {
-    getDaysEvents().then(updateLastNightly)
-      .then(pipe(createProjections, persistProjections))
-    runNightly(projectNightly)
+      .catch(handleErrors)
   }
-  runNightly(projectNightly)
 
-  restoreSnapshots(keys(projectors))
+  // Reactions
+  const createReactions = triggers => {
+    const handlers = new Map(), reactions = new Map()
+    fast.forEach(triggers, ({projection, onUpdate}) => 
+      handlers.set(projection, fast.concat(handlers.has(projection) ? handlers.get(projection) : [], [onUpdate])))
+    fast.forEach(triggers, ({projection}) => 
+      reactions.set(projection, (prev, next) => fast.forEach(handlers.get(projection), fn => fn(prev, next))))
+    return reactions
+  }
 
-  return freeze({
-    watch: buffer(watch),
-    when: buffer(when),
-    project: buffer(project),
-    getProjection: buffer(getProjection),
-    getSeeded: buffer(getSeeded),
-    setSeeded: buffer(setSeeded),
-    close: () => new Promise((resolve) => snapshots.close(resolve))
-  })
+  const reactions = createReactions(triggers)
+
+  // Projectors
+  const createProjector = ({name, reducer}) => {
+    const safeReduce = (proj, event) => 
+      (event.timestamp < (proj ? proj.timestamp : 0)) ? proj : reducer(proj, event)
+    return event => {
+      const prev = getCached(name)
+      const projection = safeReduce(prev, event)
+      const updated = projection !== prev
+      if (updated && reactions.has(name)) reactions.get(name)(prev && prev.snapshot, projection.snapshot)
+      return updated ? projection : undefined
+    }
+  }
+
+  const projectors = fast.map(lenses, createProjector)
+  const persistCache = {}
+  fast.forEach(lenses, ({name}) => persistCache[name] = {type: 'put', key: name, value: null})
+  let cacheTimer 
+  const hasValue = ({value}) => !!value
+  const flushCache = () => {
+    cacheTimer = undefined
+    return insert(fast.filter(Object.values(persistCache), hasValue))
+  }
+  const project = event => {
+    for (const projector of projectors) {
+      const projection = projector(event)
+      if (!projection || !projection.timestamp) continue
+      projectionCache.set(projection.name, projection)
+      persistCache[projection.name].value = projection
+      emitter.emit(PROJECTION_UPDATED, projection)
+    }
+    if (!cacheTimer) cacheTimer = setTimeout(flushCache, persistInterval)
+    initialized = true
+  }
+
+  let preInitEventBuffer = []
+  const bufferedProject = event => {
+    if (initialized) return project(event)
+    preInitEventBuffer.push(event) 
+  }
+
+  const init = () =>
+    fast.forEach(lenses, ({name}) =>
+      getProjection(name).then(_ => project(preInitEventBuffer)))
+
+  init()
+
+  return {
+    show,
+    project: bufferedProject,
+    getSeeded,
+    setSeeded,
+    projectionCache,
+    open: () => album.open(),
+    close: () => flushCache().then(_ => album.close()),
+    backup: () => new Promise((resolve, reject) => {
+      const name = `projections_${new Date().toISOString()}`
+      album.db.backup(name, err => err ? reject(err) : resolve(name))
+    })
+  }
 }

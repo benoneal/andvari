@@ -1,12 +1,12 @@
 {
   "name": "andvari",
-  "version": "3.2.5",
+  "version": "4.0.0",
   "description": "Event sourcing for node.js",
   "repository": "https://github.com/benoneal/andvari",
   "main": "dist/index.js",
   "scripts": {
-    "prepublish": "mkdir dist && babel src --out-dir dist",
-    "size": "npm run prepublish && bundle-size ./",
+    "prepublishOnly": "mkdirp dist && babel src --out-dir dist",
+    "size": "npm run prepublishOnly && bundle-size ./",
     "lint": "standard",
     "test": "mocha"
   },
@@ -20,22 +20,30 @@
   "author": "Ben O'Neal",
   "license": "MIT",
   "devDependencies": {
-    "assert": "^1.4.1",
-    "babel-cli": "^6.23.0",
-    "babel-eslint": "^6.1.0",
-    "babel-loader": "^6.2.4",
-    "babel-plugin-transform-react-jsx": "^6.22.0",
-    "babel-preset-es2015": "^6.9.0",
-    "babel-preset-stage-0": "^6.5.0",
-    "babel-register": "^6.9.0",
+    "@babel/cli": "^7.0.0-beta.47",
+    "@babel/core": "^7.0.0-beta.47",
+    "@babel/polyfill": "^7.0.0-beta.47",
+    "@babel/preset-env": "^7.0.0-beta.47",
+    "@babel/preset-stage-0": "^7.0.0-beta.47",
+    "@babel/register": "^7.0.0-beta.47",
+    "babel-preset-power-assert": "^2.0.0",
     "bundle-size": "^0.6.0",
+    "mkdirp": "^0.5.1",
     "mocha": "^3.2.0",
+    "power-assert": "^1.5.0",
     "standard": "^7.1.2"
   },
   "dependencies": {
-    "level": "^1.6.0",
+    "eventemitter2": "^5.0.1",
+    "eventemitter3": "^3.1.0",
+    "fast.js": "^0.1.1",
+    "level": "^3.0.1",
+    "level-hyper": "^1.2.2",
+    "lodash": "^4.17.10",
+    "lov": "^1.3.1",
     "nano-time": "^1.0.0",
-    "uuid": "^3.0.1"
+    "node-cleanup": "^2.1.2",
+    "rimraf": "^2.6.2"
   },
   "standard": {
     "parser": "babel-eslint"
