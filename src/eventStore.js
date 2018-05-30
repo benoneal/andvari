@@ -38,10 +38,10 @@ export default (path, persistInterval) => {
     persistInterval
   )
 
-  const store = event => {
-    const _event = validateEvent(event)
-    emitter.emit(EVENT_STORED, _event)
-    queue(_event)
+  const store = toStore => {
+    const event = validateEvent(toStore)
+    emitter.emit(EVENT_STORED, event)
+    queue(event)
   }
 
   const replayHistory = (options = {gt: '\x00', lt: '\xff'}) =>

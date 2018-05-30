@@ -18,13 +18,12 @@ const rand = (n = 1, offset = 0) => Math.floor(Math.random() * n) + offset
 
 export default ({
   eventStorePath,
-  projectionsPath,
   persistInterval = rand(50, 75),
   lenses = [],
   triggers = [],
 }) => {
-  if (!eventStorePath || !projectionsPath || !lenses.length) {
-    throw new Error('Andvari requires eventStorePath, projectionsPath, and lenses map')
+  if (!eventStorePath || !lenses.length) {
+    throw new Error('Andvari requires eventStorePath and lenses map')
   }
 
   const listeners = new Map()
@@ -49,12 +48,10 @@ export default ({
     project,
     getSeeded,
     setSeeded,
-    projectionCache,
     open: openProjections,
     close: closeProjections,
     backup: backupProjections
   } = initProjections(
-    projectionsPath,
     [...lenses, deferredLens],
     [...triggers, deferredTrigger],
     persistInterval
@@ -86,7 +83,7 @@ export default ({
       serialized.push(hashed)
       store(events[i])
     }
-    return setSeeded(serialized)
+    return serialized.length ? setSeeded(serialized) : Promise.resolve()
   }
 
   const when = (name, timestamp, resolve) => {

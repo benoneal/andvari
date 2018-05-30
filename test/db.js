@@ -1,12 +1,17 @@
 import createDB, {createLens} from '../src'
+import redis from 'promise-redis'
 
 import mkdirp from 'mkdirp'
 import rimraf from 'rimraf'
 
-['test/data/eventStore', 'test/data/projections'].forEach(dir => {
+['test/data/eventStore'].forEach(dir => {
   rimraf.sync(dir)
   mkdirp.sync(dir)
 })
+
+const db = redis().createClient()
+db.flushdb()
+db.quit()
 
 const sum = (a, b) => a + b
 const arrPush = (snapshot = [], payload) => {
@@ -29,7 +34,6 @@ const triggerOnUpdate = (prev = [], projection) => {
 
 const dbOptions = {
   eventStorePath: 'test/data/eventStore',
-  projectionsPath: 'test/data/projections',
   persistInterval: 10,
   lenses: [
     testLens.lens,

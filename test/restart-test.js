@@ -9,7 +9,6 @@ const {values} = Object
 
 describe('Andvari restarted', () => {
   before(() => db.open())
-  after(() => db.close())
 
   it('recovers projections', () => 
     db.showTest().then(test => assert(test.length === 27))

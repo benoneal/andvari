@@ -1,15 +1,15 @@
-import level from 'level-hyper'
+import redis from 'promise-redis'
 import fast from 'fast.js'
 import emitter from './emitter'
 
 export const ERROR = 'ERROR'
 export const PROJECTION_UPDATED = 'PROJECTION_UPDATED'
 
-const handleErrors = error => 
-  emitter.emit(ERROR, {message: 'Error persisting projections', error, timestamp: Date.now()})
+const handleRetrieveError = error => 
+  emitter.emit(ERROR, {message: 'Error retrieving projection', error, timestamp: Date.now()})
 
-export default (path, lenses, triggers = [], persistInterval) => {
-  const album = level(path, {valueEncoding: 'json'})
+export default (lenses, triggers = [], persistInterval) => {
+  const album = redis().createClient()
   let initialized = false
   const projectionCache = new Map()
   const getCached = name => projectionCache.get(name)
@@ -18,20 +18,12 @@ export default (path, lenses, triggers = [], persistInterval) => {
     return cached && cached.snapshot
   }
 
-  const retrieve = key => new Promise((resolve, reject) => {
-    album.get(key, (err, value) => 
-      (!err || err.notFound) ? resolve(value === null ? undefined : value) : reject(err))
-  })
-  const insert = projectionOperations => new Promise((resolve, reject) => {
-    album.batch(projectionOperations, err => err ? reject(err) : resolve())
-  })
+  const retrieve = key => album.get(key).then(str => JSON.parse(str))
+  const insert = projectionOperations => album.batch(projectionOperations).exec()
 
   // Seeding
-  const getSeeded = () => retrieve('__seeded__').then(seeded => seeded || [])
-
-  const setSeeded = newSeeds =>
-    retrieve('__seeded__').then(seeded =>
-      insert([{type: 'put', key: '__seeded__', value: fast.concat(seeded, newSeeds)}]).then(_ => newSeeds))
+  const getSeeded = () => album.smembers('__seeded__')
+  const setSeeded = seeds => album.sadd('__seeded__', seeds).then(_ => seeds)
 
   // Persistence
   const getProjection = name => {
@@ -39,10 +31,11 @@ export default (path, lenses, triggers = [], persistInterval) => {
     if (cached) return Promise.resolve(cached)
     return retrieve(name)
       .then(projection => {
-        projectionCache.set(name, projection)
-        return projection
+        const proj = projection || undefined
+        proj && projectionCache.set(name, proj)
+        return proj
       })
-      .catch(handleErrors)
+      .catch(handleRetrieveError)
   }
 
   // Reactions
@@ -72,23 +65,31 @@ export default (path, lenses, triggers = [], persistInterval) => {
 
   const projectors = fast.map(lenses, createProjector)
   const persistCache = {}
-  fast.forEach(lenses, ({name}) => persistCache[name] = {type: 'put', key: name, value: null})
+  fast.forEach(lenses, ({name}) => persistCache[name] = {key: name, value: null})
   let cacheTimer 
-  const hasValue = ({value}) => !!value
+  const persistOperation = (acc, {key, value}) => {
+    if (value === null || value === undefined) return acc
+    const v = JSON.stringify(value)
+    console.log(key, v.length / 1000000)
+    acc.push(['set', key, v])
+    persistCache[key].value = null
+    return acc
+  }
   const flushCache = () => {
     cacheTimer = undefined
-    return insert(fast.filter(Object.values(persistCache), hasValue))
+    return insert(fast.reduce(Object.values(persistCache), persistOperation, []))
   }
   const project = event => {
+    let hasUpdates = false
     for (const projector of projectors) {
       const projection = projector(event)
       if (!projection || !projection.timestamp) continue
+      hasUpdates = true
       projectionCache.set(projection.name, projection)
       persistCache[projection.name].value = projection
       emitter.emit(PROJECTION_UPDATED, projection)
     }
-    if (!cacheTimer) cacheTimer = setTimeout(flushCache, persistInterval)
-    initialized = true
+    if (!cacheTimer && hasUpdates) cacheTimer = setTimeout(flushCache, 1500)
   }
 
   let preInitEventBuffer = []
@@ -98,8 +99,11 @@ export default (path, lenses, triggers = [], persistInterval) => {
   }
 
   const init = () =>
-    fast.forEach(lenses, ({name}) =>
-      getProjection(name).then(_ => project(preInitEventBuffer)))
+    Promise.all(fast.map(lenses, ({name}) => getProjection(name)))
+      .then(_ => {
+        fast.forEach(preInitEventBuffer, project)
+        initialized = true
+      })
 
   init()
 
@@ -109,11 +113,8 @@ export default (path, lenses, triggers = [], persistInterval) => {
     getSeeded,
     setSeeded,
     projectionCache,
-    open: () => album.open(),
-    close: () => flushCache().then(_ => album.close()),
-    backup: () => new Promise((resolve, reject) => {
-      const name = `projections_${new Date().toISOString()}`
-      album.db.backup(name, err => err ? reject(err) : resolve(name))
-    })
+    open: () => {},
+    close: () => flushCache().then(_ => album.quit()),
+    backup: () => Promise.resolve()
   }
 }
